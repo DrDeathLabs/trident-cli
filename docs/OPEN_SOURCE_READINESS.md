@@ -90,9 +90,17 @@ may receive code context; its privacy and retention terms are outside Trident's
 control. Local databases, extracted workspaces, caches, and reports are not
 encrypted by the CLI.
 
-Trident is Apache-2.0. Scanner executables are external processes with their
-own licenses. Review [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md) and
-the exact versions shipped or downloaded for a release.
+Trident is source-available under the [Business Source License 1.1](../LICENSE),
+not an OSI open source license. Its Additional Use Grant permits the internal,
+organizational, educational, research, nonprofit, government, public-sector,
+community, evaluation, development, testing, and personal uses listed in the
+license. Restricted hosted, resale, commercial product, and paid third-party
+service uses require separate commercial permission. Each specific version
+changes to the MIT License four years after its first public distribution.
+
+Scanner executables are external processes with their own licenses. Review
+[THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md) and the exact versions
+shipped or downloaded for a release.
 
 ## Publication boundary
 

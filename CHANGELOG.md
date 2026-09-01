@@ -29,5 +29,8 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Licensing
 
-- Trident is Apache-2.0. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
-  for scanner licenses, including the AGPL-3.0 TruffleHog component.
+- Trident is licensed under the Business Source License 1.1. Each specific
+  version changes to the MIT License four years after its first public
+  distribution. See [LICENSE](LICENSE) and [COMMERCIAL.md](COMMERCIAL.md).
+- See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for scanner licenses,
+  including the AGPL-3.0 TruffleHog component.

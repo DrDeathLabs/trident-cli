@@ -21,7 +21,7 @@ backend/.wsl-smoke-data/
 
 # Private or non-CLI source kept outside the public repository
 vulnbank/
-eval/
+/eval/
 docs/internal/
 docs/*.docx
 docs/_extracted_*.txt

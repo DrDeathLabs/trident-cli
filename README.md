@@ -1,6 +1,6 @@
 # Trident CLI
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 Trident is a local AI-assisted vulnerability analysis and triage engine for the
@@ -240,5 +240,17 @@ See [Limitations](docs/LIMITATIONS.md), [Security](SECURITY.md), and
 
 ## License
 
-Trident is licensed under [Apache 2.0](LICENSE). The external scanners retain
-their own licenses; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Trident is licensed under the [Business Source License 1.1](LICENSE). The
+Additional Use Grant permits internal, organizational, educational, research,
+nonprofit, government, public-sector, community, evaluation, development,
+testing, and personal use as described in the license.
+
+The license does not permit hosted or managed services, SaaS, resale,
+commercialization as a standalone product, inclusion as a material feature of
+another commercial security or GRC product, or paid third-party assessment or
+managed security services without separate commercial permission. Each specific
+version changes to the MIT License four years after its first public
+distribution. See [COMMERCIAL.md](COMMERCIAL.md) for the licensing boundary.
+
+The external scanners retain their own licenses; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

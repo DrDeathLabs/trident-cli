@@ -1,6 +1,7 @@
 # Third-party notices
 
-Trident is licensed under Apache-2.0. See [LICENSE](LICENSE). The CLI runs the
+Trident is licensed under the Business Source License 1.1. See [LICENSE](LICENSE).
+The CLI runs the
 scanner tools as separate processes. They are not statically linked into
 Trident, and each tool keeps its own release and license terms.
 
