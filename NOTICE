@@ -1,0 +1,8 @@
+Trident
+Copyright 2026 The Trident Authors
+
+This project includes software developed by The Trident Authors.
+
+Trident invokes third-party security scanners as separate processes. Those
+tools are downloaded or located by the CLI and are licensed under their own
+terms. See THIRD-PARTY-NOTICES.md.

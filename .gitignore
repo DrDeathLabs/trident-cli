@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+.release-venv*/
+.release-local-venv*/
+.release-smoke-venv*/
+.wsl-smoke-venv*/
+.ci-venv/
+.pytest-tmp/
+.ruff_cache/
+
+# Local release validation data
+.release-smoke-data/
+backend/.release-smoke-data/
+backend/.wsl-smoke-data/
+*.db
+
+# Private or non-CLI source kept outside the public repository
+vulnbank/
+eval/
+docs/internal/
+docs/*.docx
+docs/_extracted_*.txt
+
+# Generated build output
+build/
+dist/
+
+# Secrets & local config
+.env
+.env.local
+*.local
+
+# Build & run artifacts
+build_*.log
+*.log
+*.sarif
+# Editor / tooling
+.claude/
+.idea/
+.vscode/
+.DS_Store

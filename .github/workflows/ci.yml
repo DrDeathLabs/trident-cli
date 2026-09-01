@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cli-lint-and-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CLI and development dependencies
+        run: python -m pip install ".[dev]"
+      - name: Lint CLI source and tests
+        run: ruff check trident tests
+      - name: Run CLI tests
+        run: python -m pytest -q
+
+  package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install packaging tools
+        run: python -m pip install build twine
+      - name: Build wheel and source distribution
+        run: python -m build --wheel --sdist
+      - name: Verify package metadata
+        run: python -m twine check dist/*
+      - name: Install wheel in a clean virtual environment
+        shell: bash
+        run: |
+          python -m venv .ci-venv
+          .ci-venv/bin/python -m pip install dist/*.whl
+          .ci-venv/bin/trident --version
+          .ci-venv/bin/trident --help
+          .ci-venv/bin/trident scan --help
+          .ci-venv/bin/trident install-tools --check
