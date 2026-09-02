@@ -1,58 +1,57 @@
-# Agentic Mode
+# Agentic exploration
 
-Standard mode gives each council expert a fixed code window around the flagged
-location. Agentic mode changes only Phase B, the cross-examination of contested
-findings. In that phase, experts can explore the scanned workspace before they
-finish their verdict.
+Standard mode gives each reviewer the code around a finding. Agentic
+exploration is an optional second step for contested findings: the reviewer can
+inspect more of the scanned workspace before reaching a verdict.
 
----
+## What it does
 
-## What agentic mode enables
+During cross-examination, reviewers can:
 
-In Phase B (cross-examination of contested findings), experts can use tool calls to:
+- read files in the workspace;
+- search for patterns across the codebase;
+- trace where a function is called; and
+- find related definitions and references.
 
-- Read any file in the workspace
-- Search for patterns across the codebase (grep)
-- Trace call chains to find where a function is called from
-- Find related definitions (where is this variable assigned, where is this function defined)
+This helps when the answer depends on code in more than one file. For example,
+the reviewer can trace user input back to its source, check whether it was
+sanitized, and see whether the flagged function is reachable from an endpoint.
 
-This is most valuable when a finding requires understanding data flow across multiple files - something a fixed code window cannot provide.
+Agentic exploration is supported, but it is off by default. That keeps ordinary
+scans from spending extra tokens and time on findings that do not need deeper
+context.
 
-**Example:** A council expert is reviewing a potential SQL injection. The flagged line uses `user_input` directly. In standard mode, the expert sees only the 30 lines around that call. In agentic mode, the expert can trace where `user_input` originates, whether it was sanitized before reaching this function, and whether the function is exposed via an HTTP handler - producing a more accurate verdict.
-
----
-
-## When to use agentic mode
+## When to use it
 
 | Situation | Recommendation |
-|-----------|---------------|
-| Large codebase with complex data flows | Use agentic mode - experts can trace across files |
-| Simple single-file project | Standard mode is sufficient |
-| CI scan where cost and time matter | Standard mode (faster, fewer LLM calls) |
-| High-stakes audit where accuracy matters most | Agentic mode |
-| Finding with `reachability: unknown` | Agentic mode can help experts determine reachability manually |
+|-----------|----------------|
+| Large codebase with complex data flows | Use agentic exploration |
+| Simple single-file project | Standard mode is usually enough |
+| CI scan where cost and time matter | Use standard mode |
+| High-impact or disputed finding | Consider agentic exploration |
+| Finding with `reachability: unknown` | Use it when more context may resolve reachability |
 
-Agentic mode increases the number of LLM calls, which increases both cost and scan time. It is most valuable on contested findings in complex codebases.
+Agentic exploration increases LLM calls, scan time, and cost. It is most useful
+when a fixed code window is not enough to settle a finding.
 
----
-
-## Enabling agentic mode
+## Enable it
 
 ### Persistent config
 
 ```bash
 trident config set scan.agentic true
+```
 
 Or enable it for one shell invocation:
 
 ```bash
 AGENTIC=true trident scan .
 ```
-```
 
-### Recommended model
+## Model choice
 
-Agentic mode is most effective with a model that performs well at multi-step reasoning and tool use. For local models:
+Use a model that handles multi-step reasoning and tool use well. For local
+models:
 
 ```bash
 trident config set llm.expert_model qwen2.5-coder:32b
@@ -65,38 +64,34 @@ trident config set llm.backend anthropic
 trident config set llm.expert_model claude-sonnet-5
 ```
 
----
+## Available tools
 
-## Available tools in agentic mode
-
-These tools are available to experts during Phase B when agentic mode is active:
+These tools are available during cross-examination when agentic exploration is active:
 
 | Tool | Description |
 |------|-------------|
-| `read_file` | Read the contents of any file in the workspace |
-| `search_pattern` | Grep for a pattern across the workspace |
+| `read_file` | Read the contents of a file in the workspace |
+| `search_pattern` | Search for a pattern across the workspace |
 | `find_definition` | Find where a symbol is defined |
 | `find_callers` | Find all call sites for a function |
 | `list_directory` | List the contents of a directory |
 
-Tool calls are bounded - experts cannot read files outside the scanned workspace. There is no network access from agentic tool calls.
+Tool calls are bounded. Reviewers cannot read files outside the scanned
+workspace, and the exploration tools have no network access.
 
----
+## Cost and limits
 
-## Performance and cost tradeoffs
-
-| Dimension | Standard mode | Agentic mode |
-|-----------|--------------|-------------|
+| Dimension | Standard mode | Agentic exploration |
+|-----------|---------------|---------------------|
 | LLM calls per contested finding | 2-4 | 5-20+ (depends on exploration depth) |
 | Scan time for a medium codebase | 3-8 min | 8-25 min |
 | Verdict accuracy on complex findings | Good | Better |
-| Cost on cloud LLM (e.g. Anthropic) | Low | Higher |
+| Cost on cloud LLM | Low | Higher |
 
-Agentic mode does not change Phase A (independent review). It only activates during Phase B for contested findings. If all findings are uncontested (all experts agree), agentic mode adds no cost.
+Agentic exploration does not change the independent review phase. It activates
+only during cross-examination. If findings are uncontested, it adds no calls.
 
----
-
-## Limiting agentic tool calls
+## Limit exploration
 
 To cap the number of tool calls per finding:
 
@@ -104,13 +99,11 @@ To cap the number of tool calls per finding:
 AGENT_MAX_STEPS=10 trident scan .
 ```
 
-The default is six steps per expert. A lower cap reduces cost at the risk of
-incomplete exploration on complex findings; a higher cap may increase scan time.
-
----
+The default is six steps per reviewer. A lower cap reduces cost but may leave a
+complex finding unresolved. A higher cap can increase scan time.
 
 ## See also
 
-- [AI_COUNCIL](AI_COUNCIL.md) - Phase A and Phase B deliberation
-- [CONFIGURATION](CONFIGURATION.md) - `scan.agentic` and related config keys
-- [LLM_BACKENDS](LLM_BACKENDS.md) - recommended models for agentic mode
+- [AI council](AI_COUNCIL.md) - independent review and cross-examination
+- [Configuration](CONFIGURATION.md) - `scan.agentic` and related config keys
+- [LLM backends](LLM_BACKENDS.md) - model setup

@@ -15,9 +15,8 @@ live targets.
 ## Intended use
 
 Trident is a local command-line security-analysis and triage tool. Scan only
-code you own or are explicitly authorized to analyze. The `vulnbank/` and
-`eval/` content is deliberately vulnerable test material and must not be
-deployed or exposed.
+code you own or are explicitly authorized to analyze. Do not deploy or expose
+local test fixtures or evaluation material.
 
 Trident executes third-party scanner processes and may send code context to
 the configured LLM backend. Run it in a trusted environment and select a
