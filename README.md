@@ -4,37 +4,43 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 Trident is a local AI-assisted vulnerability analysis and triage engine for the
-command line. It combines twelve established scanners with a council of
-specialized LLM reviewers and a novel, evidence-preserving workflow that turns
-noisy scanner output into an automatically worked P0-P4 remediation queue.
+command line. It combines twelve established scanners with a Council of Experts
+(COE): five domain specialists review candidates independently, a judge
+challenges high-severity and contested findings, and a red-team reviewer looks
+for attack chains across the confirmed findings.
 
-Trident is built for the part of security work that scanners leave unresolved:
-not only finding candidate weaknesses, but determining which candidates are
-real, how they can be reached, how urgently each confirmed issue should be
-worked in this codebase, and why.
+The COE is the review engine. It determines which scanner candidates are
+supported by the code, which are duplicates or false positives, and which need
+more evidence. Trident preserves those verdicts and the reasoning behind them.
+It then applies deterministic triage to the findings that survive review,
+using impact, attack vector, exploitability, fix effort, reachability, and
+attack-chain context to produce a worked P0-P4 remediation queue.
 
-Security tools are already good at producing candidates. The harder problem is
-what comes next: hundreds of overlapping alerts, inconsistent severities, weak
-reachability context, and false positives that consume the same scarce
-engineering attention as real vulnerabilities. Trident is built around that
-problem.
+Scanners are good at producing candidates. The harder problem is what comes
+next: overlapping alerts, inconsistent severities, weak reachability context,
+and false positives competing with real vulnerabilities for engineering time.
+Trident is built to resolve that part of the work.
 
 > Authorized use only. Scan code you own or have explicit permission to analyze.
 
-## How the scan becomes a work queue
+## How Trident reviews a scan
 
-Trident keeps scanner output and triage separate.
+Trident keeps scanner output, COE review, attack-chain analysis, and triage
+separate so each decision can be inspected.
 
-1. **Find candidates.** The scanner tools establish broad coverage.
-2. **Review candidates.** Correlation removes duplicates. Domain reviewers,
-   judge review, and attack-chain analysis provide additional evidence. A
-   candidate that does not hold up is rejected from the actionable queue but
-   remains in the record.
-3. **Set priority.** Triage evaluates the factors that affect the work: impact,
-   attack vector, exploitability, fix effort, reachability, and attack chains.
-   Deterministic code turns those factors into P0-P4 and records any adjustment.
-4. **Export the result.** Reports contain the confirmed findings, their priority,
-   the rationale, and the evidence behind the decision.
+1. **Find candidates.** Twelve scanner adapters establish broad coverage.
+2. **Correlate candidates.** Overlapping alerts are grouped so the COE reviews
+   the issue once instead of debating the same problem repeatedly.
+3. **Run the COE.** The relevant domain experts review candidates independently.
+   Contested findings go through cross-examination. The judge rechecks
+   high-severity results and disagreements.
+4. **Look for attack chains.** The red-team reviewer examines the confirmed
+   findings together. If separate weaknesses form a credible attack path, the
+   chain is recorded and its findings can be raised one priority tier.
+5. **Set priority.** Deterministic triage uses the assessed factors, reachability
+   evidence, and chain context to assign P0-P4 and record any adjustment.
+6. **Export the result.** Reports contain the confirmed findings, priority,
+   rationale, attack-chain context, and the evidence behind each decision.
 
 The result is a queue someone can work, not just a list of alerts. SARIF works
 with code-scanning workflows, JSON supports automation, table output is useful
@@ -69,8 +75,9 @@ the review process, and high-impact results still require qualified human review
 - Software composition analysis: Grype, OSV-Scanner, Trivy, pip-audit,
   npm-audit, and govulncheck.
 - Secrets detection: Gitleaks and TruffleHog.
-- Correlation, duplicate collapse, expert review, judge review, red-team chain
-  analysis, reachability analysis, and automatic evidence-preserving P0-P4 triage.
+- Council of Experts review, independent domain specialists, judge review,
+  cross-examination, red-team attack-chain analysis, reachability analysis, and
+  automatic evidence-preserving P0-P4 triage.
 - Local SQLite state with no network service required by the CLI itself.
 - Configurable Ollama, OpenAI, or Anthropic review backends.
 
