@@ -21,9 +21,16 @@ next: overlapping alerts, inconsistent severities, weak reachability context,
 and false positives competing with real vulnerabilities for engineering time.
 Trident is built to resolve that part of the work.
 
+The COE answers one question: is this candidate supported by the code? Triage
+answers the next one: how urgently should this confirmed issue be worked here?
+The triage pass assesses impact, attack vector, exploitability, fix effort, and
+reachability. Deterministic logic applies the rubric and evidence-based
+adjustments, incorporates attack-chain context, assigns P0-P4, and records the
+rationale, remediation guidance, and any change from the original assessment.
+
 > Authorized use only. Scan code you own or have explicit permission to analyze.
 
-## How Trident reviews a scan
+## How Trident reviews and triages a scan
 
 Trident keeps scanner output, COE review, attack-chain analysis, and triage
 separate so each decision can be inspected.
@@ -37,14 +44,18 @@ separate so each decision can be inspected.
 4. **Look for attack chains.** The red-team reviewer examines the confirmed
    findings together. If separate weaknesses form a credible attack path, the
    chain is recorded and its findings can be raised one priority tier.
-5. **Set priority.** Deterministic triage uses the assessed factors, reachability
-   evidence, and chain context to assign P0-P4 and record any adjustment.
+5. **Triage confirmed findings.** The triage pass assesses impact, attack vector,
+   exploitability, fix effort, and reachability. Deterministic logic applies the
+   rubric and evidence-based adjustments, then assigns P0-P4.
 6. **Export the result.** Reports contain the confirmed findings, priority,
    rationale, attack-chain context, and the evidence behind each decision.
 
-The result is a queue someone can work, not just a list of alerts. SARIF works
-with code-scanning workflows, JSON supports automation, table output is useful
-at the terminal, and the triage sidecar preserves the complete decision record.
+The result is a worked remediation queue, not just a list of alerts. Each
+confirmed finding carries its priority, rationale, factors, reachability
+context, and recommended action. Findings that are rejected remain available as
+review evidence, so the queue can be acted on without losing the decision trail.
+SARIF works with code-scanning workflows, JSON supports automation, table output
+is useful at the terminal, and the triage sidecar preserves the complete record.
 
 In one 215-finding PyGoat evaluation, the documented deterministic correction
 changed the P0-P4 shape from a scanner/model-driven barbell (47 P0 findings) to
