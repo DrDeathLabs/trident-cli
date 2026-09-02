@@ -26,7 +26,7 @@ This table describes the current standalone CLI capabilities.
 | Five domain experts | Supported | Injection, auth, crypto, dependency, secrets/config |
 | Judge and cross-examination | Supported | Applied according to finding severity and disagreement |
 | Novel discovery | Supported | Iterative expert review |
-| Agentic exploration | Beta | Disabled by default |
+| Agentic exploration | Supported, optional | Off by default to limit token use and scan time. Enable with `scan.agentic` or `AGENTIC=true`. |
 | Attack-chain analysis | Supported | Chains confirmed findings |
 | Class correction | Supported | Deterministic category-specific factor caps |
 | Corpus-profile adjustment | Supported | Requires downloaded CWE profiles from model refresh |

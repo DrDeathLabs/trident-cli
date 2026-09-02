@@ -1,12 +1,10 @@
 # Trident CLI documentation
 
-Trident is an AI-assisted local command-line security scanner whose defining
-surface is its novel, automatic, evidence-preserving triage workflow. These
-documents explain how twelve scanners establish breadth, how specialized AI
-reviewers adjudicate noisy candidates, how deterministic triage computes an
-operational P0-P4 priority, and how the result becomes a worked queue without
-losing the false-positive audit trail. They also document where human review
-remains mandatory.
+Trident is a local command-line security scanner built around evidence-preserving
+triage. These documents explain how twelve scanners find candidates, how review
+separates real findings from noise, how deterministic triage computes a P0-P4
+priority, and how the result becomes a worked queue without losing the audit
+trail. They also document where human review remains mandatory.
 
 ## New users
 
@@ -32,7 +30,7 @@ remains mandatory.
 - [LLM backends](LLM_BACKENDS.md) - Ollama, OpenAI, and Anthropic setup.
 - [Corpus calibration](CORPUS_GUARD_MODEL.md) - feed refresh, profiles, and the
   separately maintained statistical artifact.
-- [Agentic mode](AGENTIC_MODE.md) - optional bounded exploratory review.
+- [Agentic exploration](AGENTIC_MODE.md) - optional bounded workspace review.
 
 ## CI and release maintainers
 
@@ -70,7 +68,7 @@ remains mandatory.
 | Table, JSON, and SARIF reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
 | Full triage sidecar reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
 | CWE-profile triage adjustment | Optional; requires refresh | [Corpus calibration](CORPUS_GUARD_MODEL.md) |
-| Agentic exploratory review | Experimental; opt in | [Agentic mode](AGENTIC_MODE.md) |
+| Agentic exploration | Supported, optional; off by default | [Agentic exploration](AGENTIC_MODE.md) |
 | Runtime penetration testing | Unsupported | [Limitations](LIMITATIONS.md) |
 | Compliance certification | Unsupported | [Limitations](LIMITATIONS.md) |
 
