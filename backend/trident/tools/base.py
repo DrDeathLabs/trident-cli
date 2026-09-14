@@ -198,6 +198,7 @@ class ToolBase(ABC):
                 tool=rf.tool,
                 rule_id=rf.rule_id,
                 severity=rf.severity,
+                scanner_severity=rf.severity,
                 confidence=rf.confidence,
                 title=rf.title,
                 description=rf.description,

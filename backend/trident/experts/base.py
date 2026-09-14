@@ -27,6 +27,7 @@ from trident.reliability.structured import StructuredResult, chat_structured
 from trident.events.publisher import EventType, publish_event
 from trident.llm.base import ChatMessage
 from trident.models import DebateMessage, Finding
+from trident.workspace import is_within
 
 EXT_MAP = {
     ".py": "python", ".go": "go", ".js": "javascript", ".ts": "typescript",
@@ -83,7 +84,7 @@ class ExpertBase(ABC):
 
     def invoke_review(
         self, finding: Finding, peers: list[dict] | None = None,
-        budget=None, agentic: bool | None = None,
+        budget=None, agentic: bool | None = None, iteration: int = 0,
     ) -> StructuredResult[ReviewVerdict]:
         """Review a finding. No DB access — returns a validated verdict or a parse failure.
 
@@ -95,7 +96,10 @@ class ExpertBase(ABC):
         ext = self._ext_for(finding.file)
         snippet = self._read_file(finding.file, finding.line_start, finding.line_end)
         if use_agentic and self._tools is not None:
-            task = build_agent_review_task(self.persona, self.domain, finding, snippet, ext, peers=peers)
+            task = build_agent_review_task(
+                self.persona, self.domain, finding, snippet, ext,
+                peers=peers, workspace=self.workspace,
+            )
             return run_agent(
                 self.system_prompt + AGENT_SYSTEM_SUFFIX, task, self._tools, ReviewVerdict,
                 model=self.model, max_steps=settings.agent.max_steps,
@@ -103,13 +107,19 @@ class ExpertBase(ABC):
             )
         if budget is not None:
             budget.take(1)
-        prompt = build_review_prompt(self.persona, self.domain, finding, snippet, ext, peers=peers)
+        prompt = build_review_prompt(
+            self.persona, self.domain, finding, snippet, ext,
+            peers=peers, workspace=self.workspace,
+        )
         return chat_structured(
             [ChatMessage("system", self.system_prompt), ChatMessage("user", prompt)],
             ReviewVerdict, model=self.model,
+            context={"run_id": self.job_id, "finding_id": finding.id,
+                     "task_type": "council_review", "council_role": self.name,
+                     "iteration": iteration},
         )
 
-    def invoke_propose(self, files_block: str, budget=None) -> StructuredResult[NovelFindingList]:
+    def invoke_propose(self, files_block: str, budget=None, iteration: int = 0) -> StructuredResult[NovelFindingList]:
         """Propose novel findings the tools may have missed, in this expert's domain."""
         if self.agentic and self._tools is not None:
             task = build_agent_propose_task(self.persona, self.domain, files_block)
@@ -124,14 +134,18 @@ class ExpertBase(ABC):
         return chat_structured(
             [ChatMessage("system", self.system_prompt), ChatMessage("user", prompt)],
             NovelFindingList, model=self.model, temperature=0.3,
+            context={"run_id": self.job_id, "task_type": "novel_discovery",
+                     "council_role": self.name, "iteration": iteration},
         )
 
     def _read_file(self, path: str, line_start: int = 0, line_end: int = 0, context: int = 5) -> str:
         """Read a snippet of a file from the workspace, scoped (blinded to scorecard)."""
+        if not self.workspace:
+            return "[source context unavailable: imported report metadata only]"
         full = os.path.join(self.workspace, path)
         real = os.path.realpath(full)
         ws_real = os.path.realpath(self.workspace)
-        if os.path.commonpath([real, ws_real]) != ws_real:
+        if not is_within(ws_real, real):
             return "[access denied: outside workspace]"
         try:
             with open(real, encoding="utf-8", errors="replace") as f:

@@ -196,3 +196,107 @@ def test_three_guard_pipeline_sqli_unreachable():
     vec3 = _cap(vec2, _VECTOR_RANK, "local")    # simulated reachability cap
     assert vec3 == "local"
     assert tier_for(a, impact=imp2, attack_vector=vec3) <= "P2"
+
+
+def test_unknown_attack_vector_cannot_create_remote_priority():
+    a = _a(impact="rce", attack_vector="unknown", exploitability="trivial")
+    assert tier_for(a) == "P2"
+
+
+def test_report_only_single_finding_chain_cannot_elevate_to_p0(db, job, monkeypatch):
+    from trident.models import AttackChain
+    from trident.triage import run_triage
+
+    finding = _f(
+        id="report-only-chain-finding", job_id=job.id, hash="report-only-chain-hash",
+        severity="critical", scanner_severity="critical", status="confirmed",
+        raw_outputs={"raw": {"import_format": "dependency-check", "package": "library",
+                             "InstalledVersion": "1.0.0", "record": {"name": "CVE-1"}}},
+    )
+    db.add(finding)
+    db.flush()
+    chain = AttackChain(id="single-report-chain", job_id=job.id, goal="report path")
+    chain.findings.append(finding)
+    db.add(chain)
+    db.commit()
+    monkeypatch.setattr(
+        "trident.triage._assess",
+        lambda workspace, finding, budget: _a(
+            impact="rce", attack_vector="remote_unauth", exploitability="trivial"
+        ),
+    )
+    monkeypatch.setattr("trident.triage._corpus_profiles", lambda: {})
+
+    run_triage(db, job.id)
+    db.refresh(finding)
+    assert finding.triage["reachability"] == "unknown"
+    assert finding.triage["attack_vector"] == "unknown"
+    assert finding.priority == "P2"
+    assert finding.triage["chain_priority_eligible"] is False
+    assert finding.triage["chain_priority_suppressed_reason"]
+
+
+def test_identity_matched_kev_can_floor_report_only_finding_at_p1(db, job, monkeypatch):
+    from trident.triage import run_triage
+
+    finding = _f(
+        id="kev-finding", job_id=job.id, hash="kev-hash", severity="medium",
+        scanner_severity="medium", status="confirmed",
+        raw_outputs={"raw": {
+            "import_format": "dependency-check", "package": "library",
+            "InstalledVersion": "1.0.0", "kev": {"listed": True},
+            "cpe_identity": {"status": "match"}, "record": {"name": "CVE-KEV"},
+        }},
+    )
+    db.add(finding)
+    db.commit()
+    monkeypatch.setattr(
+        "trident.triage._assess",
+        lambda workspace, finding, budget: _a(
+            impact="other", attack_vector="remote_unauth", exploitability="difficult"
+        ),
+    )
+    monkeypatch.setattr("trident.triage._corpus_profiles", lambda: {})
+
+    run_triage(db, job.id)
+    db.refresh(finding)
+    assert finding.priority == "P1"
+    assert finding.triage["kev_floor"]
+
+
+def test_related_identity_matched_kev_can_floor_canonical_report_finding(db, job, monkeypatch):
+    from trident.triage import run_triage
+
+    finding = _f(
+        id="canonical-kev", job_id=job.id, hash="canonical-kev-hash",
+        severity="medium", scanner_severity="medium",
+        status="confirmed", tool="dependency-check", rule_id="CVE-1",
+        raw_outputs={"raw": {
+            "import_format": "dependency-check", "package": "library",
+            "InstalledVersion": "1.2.3", "kev": {"listed": False},
+            "cpe_identity": {"status": "unknown"},
+        }, "correlation": {"kev_floor_evidence": [{
+                "finding_id": "related-kev", "rule_id": "CVE-2",
+                "kev": {"listed": True, "source": "imported_record"},
+                "identity": {"status": "match"},
+            }]},
+        },
+    )
+    db.add(finding)
+    db.commit()
+    monkeypatch.setattr("trident.triage._assess", lambda *args: TriageAssessment())
+    run_triage(db, job.id)
+    assert finding.priority == "P1"
+    assert finding.triage["kev_floor"]
+
+
+def test_enrichment_preserves_scanner_severity_and_stores_model_severity():
+    from trident.deliberation import _V, _apply_enrichment
+    from trident.reliability.schemas import ReviewVerdict
+
+    finding = _f(severity="critical", scanner_severity="critical")
+    verdict = ReviewVerdict(verdict="confirmed", confidence=0.9, severity="info")
+    _apply_enrichment(finding, [_V("expert", "Expert", "confirmed", 0.9, "", verdict)])
+    assert finding.severity == "critical"
+    assert finding.scanner_severity == "critical"
+    assert finding.model_severity == "info"

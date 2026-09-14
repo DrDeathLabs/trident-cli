@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from trident.config import settings
 from trident.eval.guard import workspace_has_scorecard
 from trident.events.publisher import EventType, publish_event
+from trident.workspace import prune_dirs
 
 # Extensions -> language mapping for enrichment
 LANG_EXT = {
@@ -34,10 +35,8 @@ VULNBANK_DIR = os.environ.get("TRIDENT_VULNBANK_DIR", "/app/vulnbank")
 
 def _detect_languages(workspace: str) -> list[str]:
     langs: set[str] = set()
-    for root, _dirs, files in os.walk(workspace):
-        # Skip common heavy dirs
-        if any(part in {".git", "node_modules", "__pycache__", ".venv", "vendor"} for part in root.split(os.sep)):
-            continue
+    for root, dirs, files in os.walk(workspace):
+        prune_dirs(dirs)
         for fn in files:
             ext = os.path.splitext(fn)[1].lower()
             lang = LANG_EXT.get(ext)
@@ -95,8 +94,29 @@ def _make_workspace(job_id: str) -> str:
 
 def ingest(db: Session, job_id: str, source_type: str, source_ref: str) -> tuple[str, list[str], str | None]:
     """Ingest a source into a workspace. Returns (workspace_path, languages, commit_hash)."""
-    ws = _make_workspace(job_id)
     commit_hash: str | None = None
+
+    if source_type == "import":
+        # Imported reports replace scanner execution. A source directory, when
+        # supplied in the job profile, is review context only. It must not pass
+        # through scorecard blinding because it may be the user's original tree.
+        from trident.models import Job
+        job = db.get(Job, job_id)
+        source_dir = str((job.profile or {}).get("source_context") or "") if job else ""
+        if source_dir:
+            if not os.path.isdir(source_dir):
+                raise FileNotFoundError(f"source directory not found: {source_dir}")
+            ws = source_dir
+            languages = _detect_languages(ws)
+        else:
+            ws = ""
+            languages = []
+        publish_event(db, job_id, EventType.JOB_INGEST_COMPLETE, {
+            "workspace": ws, "languages": languages, "import_mode": True,
+        })
+        return ws, languages, None
+
+    ws = _make_workspace(job_id)
 
     if source_type == "demo":
         # Copy the bundled VulnBank target

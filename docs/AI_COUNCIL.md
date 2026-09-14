@@ -6,7 +6,9 @@ Asking one LLM "find vulnerabilities in this code" produces hallucinations, miss
 
 The result is a multi-perspective deliberation with explicit verdicts (confirmed / disputed / refuted / abstained) that are all persisted, inspectable, and auditable.
 
-The council answers whether a scanner candidate is supported by the code. It
+The council answers whether a normalized finding candidate is supported by the
+available evidence. Candidates may come from a native scanner or a supported
+SonarQube/Dependency-Check import. It
 does not directly decide the final P0-P4 priority. Confirmed findings continue
 into the separate triage pass, where the model supplies explicit factors and
 deterministic code computes and explains the operational priority.

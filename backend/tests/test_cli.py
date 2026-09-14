@@ -176,6 +176,19 @@ def test_render_table_empty_findings():
     assert "Triage plan:" in table
 
 
+def test_render_table_exposes_remediation_actions():
+    table = _render_table([], "imported", [{
+        "action_id": "action-demo",
+        "package": "example-lib",
+        "version": "1.2.3",
+        "highest_priority": "P2",
+        "occurrence_count": 4,
+    }])
+    assert "action-demo" in table
+    assert "example-lib 1.2.3" in table
+    assert "occurrences=4" in table
+
+
 # ---------------------------------------------------------------------------
 # Integration: scan command exit codes
 # ---------------------------------------------------------------------------

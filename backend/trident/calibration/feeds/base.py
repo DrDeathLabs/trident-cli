@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
+from trident.calibration.paths import data_dir
+
 
 def get_data_dir() -> Path:
-    return Path(os.environ.get("CALIBRATION_DATA_DIR", "/data/calibration"))
+    return data_dir()
 
 
 class BaseFetcher:

@@ -1,21 +1,29 @@
-# Triage Adjustments (Guards in the CLI and Report Schema)
+# Triage Adjustments (the `guard` fields in the CLI and report schema)
 
-Guards are post-deliberation triage adjustments that apply deterministic signals
-to the AI council's factor assessment. They run after a finding is confirmed and
-before the final priority is exported.
+The guard fields record post-deliberation triage adjustments that apply
+deterministic signals to the AI council's factor assessment. They run after a
+finding is retained and before the final priority is exported.
 
 These are not runtime protection controls, policy gates, or proof that a target
 is safe. They do not block code execution or replace human review. Their job is
-to calibrate the council's assessment for the specific finding and preserve a
-readable explanation of any adjustment.
+to correct the council's assessment for the specific finding and preserve a
+readable explanation of any adjustment. The word `guard` remains in the field
+names for schema compatibility.
 
 ---
 
-## Why guards
+## Why these adjustments
 
 LLMs overestimate severity consistently in two categories: hardcoded secrets and hygiene findings. They also overestimate reach - a "remote_unauth" rating on a private internal function that is never exposed to the network.
 
-Guards are layered, deterministic, and auditable. Every adjustment they make is recorded in the finding's triage fields so you can see exactly what changed and why.
+These adjustments are layered, deterministic, and auditable. Every adjustment
+they make is recorded in the finding's triage fields so you can see exactly what
+changed and why.
+
+For report-only imports, the corpus and class mechanisms can still adjust the
+P0-P4 factors from imported evidence. Reachability remains `unknown` because no
+source graph exists. A report-derived attack chain may still affect priority,
+but it is labeled `report_derived` in `chain_basis` and `attack_paths[].basis`.
 
 ---
 
@@ -101,21 +109,21 @@ The class guard is a deterministic, rule-based layer that caps severity for spec
 
 ### Secrets and credential findings
 
-Secret detection tools (gitleaks, trufflehog) and SAST rules for hardcoded credentials frequently flag findings that the LLM council rates as P0 or P1. The class guard applies an upper cap:
-
-| Secret class | Max tier |
-|-------------|---------|
-| API key or token (verified active by TruffleHog) | P1 |
-| API key or token (not verified) | P2 |
-| Password in test/fixture file | P3 |
-| Generic high-entropy string | P3 |
-| Certificate private key | P1 |
-
-"Verified active" means TruffleHog's active-verification pass confirmed the secret against the provider API.
+The implementation classifies a finding as `secret` when its tool is `gitleaks`
+or its rule/title matches the hardcoded-secret patterns in
+`backend/trident/triage.py`. It caps impact at `data_exposure` and the attack
+vector at `local`. This is a factor correction, not a claim that a secret is
+inactive. TruffleHog verification metadata is retained when a scanner supplies
+it, but the class correction does not independently contact a secret provider.
 
 ### Hygiene findings
 
-Code hygiene findings (missing error handling, deprecated function use, informational patterns) are capped at P3 regardless of the council's rating. These findings are real and worth fixing, but they do not carry the exploitability that a P1 or P0 requires.
+The implementation classifies a finding as `hygiene` when its rule/title
+matches the weak-crypto, insecure-randomness, CSRF, debug, bind-all-interface,
+or similar patterns in `backend/trident/triage.py`. It caps impact at `dos` and
+the attack vector at `local`. The exact final P0-P4 tier still comes from the
+normal rubric after this factor correction. The class guard does not apply a
+fixed tier by itself.
 
 ### When class guard is null
 
@@ -124,7 +132,7 @@ Code hygiene findings (missing error handling, deprecated function use, informat
 ### Class guard in the triage block
 
 ```json
-"guard": "Secrets class: unverified API key; cap applied at P2 (model rated P1)"
+"guard": "secret-class: exploiting a hardcoded secret needs source access (vector capped to local; impact to data_exposure)"
 ```
 
 ---

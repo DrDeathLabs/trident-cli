@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, TypeVar
 
 from loguru import logger
@@ -13,26 +12,30 @@ T = TypeVar("T", bound=BaseModel)
 
 
 def parse_llm_json(content: str) -> dict[str, Any]:
-    """Parse a JSON object from LLM output, tolerating code fences and prose."""
+    """Parse exactly one JSON object or one fenced JSON object.
+
+    Model output is security decision input.  Do not search arbitrary prose for
+    a nested object: that can accept an unrelated or attacker-controlled JSON
+    fragment as the decision.  Repair is handled by the structured layer.
+    """
     if not content:
         return {}
-    # Strip code fences if present
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
-    text = m.group(1) if m else content
-    # Try direct parse first
+    text = content.strip()
+    if text.startswith("```") and text.endswith("```"):
+        lines = text.splitlines()
+        if len(lines) < 3 or not lines[0].strip().startswith("```") or lines[-1].strip() != "```":
+            return {}
+        language = lines[0].strip()[3:].strip().lower()
+        if language not in {"", "json"}:
+            return {}
+        text = "\n".join(lines[1:-1]).strip()
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # Find the first {...} block
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
-        chunk = text[start : end + 1]
-        try:
-            return json.loads(chunk)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM JSON: {e}")
+        value = json.loads(text)
+        if isinstance(value, dict):
+            return value
+        logger.warning("LLM response was valid JSON but not an object")
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse LLM JSON: {e}")
     return {}
 
 

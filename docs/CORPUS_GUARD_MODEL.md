@@ -15,13 +15,13 @@ The corpus model is built from seven vulnerability intelligence feeds:
 
 | Feed | Source | Approx. size |
 |------|--------|-------------|
-| NVD | National Vulnerability Database (NIST) | 286,000 CVEs |
-| EPSS | Exploit Prediction Scoring System | 366,000 CVE scores |
-| KEV | CISA Known Exploited Vulnerabilities | 1,600 entries |
-| ExploitDB | Exploit Database (Offensive Security) | 27,000 exploits |
-| CWE | Common Weakness Enumeration taxonomy | 969 weakness types |
-| vulnrichment | CISA vulnrichment enrichment dataset | 177,000 records |
-| OSV | Open Source Vulnerabilities database | 32,000 OSS advisories |
+| NVD | National Vulnerability Database (NIST) | Current feed size |
+| EPSS | Exploit Prediction Scoring System | Current feed size |
+| KEV | CISA Known Exploited Vulnerabilities | Current catalog size |
+| ExploitDB | Exploit Database (Offensive Security) | Current feed size |
+| CWE | Common Weakness Enumeration taxonomy | Current taxonomy size |
+| vulnrichment | CISA vulnrichment enrichment dataset | Current feed size |
+| OSV | Open Source Vulnerabilities database | Current feed size |
 
 These feeds are joined on CVE ID and CWE ID to produce a unified dataset with enriched labels. EPSS scores, KEV membership, and ExploitDB entries are used as training signals for exploitability ground truth.
 
@@ -40,7 +40,9 @@ After joining the feeds, the model groups CVEs by CWE and computes a statistical
 
 These profiles represent what severity ratings actually look like for vulnerabilities of each type, across real-world disclosure data.
 
-**766 CWE profiles** meet the 200-CVE threshold as of the default corpus build. CWEs with fewer than 200 CVEs are excluded from calibration - the corpus guard skips those findings.
+The number of qualifying CWE profiles is a property of the downloaded feed
+snapshot. CWEs with fewer than 200 CVEs are excluded from calibration, so the
+corpus guard skips findings without a qualifying profile.
 
 ---
 
@@ -86,18 +88,13 @@ The model refresh requires an active internet connection and sufficient disk spa
 trident model status
 ```
 
-Displays the current model state:
+Displays the current model state and counts from the active feed snapshot:
 
 ```
 Corpus guard model
   Status         : active
-  Build date     : 2026-08-15T09:22:31Z
-  CVEs indexed   : 285,847
-  CWE profiles   : 766
-  EPSS scores    : 366,102
-  KEV entries    : 1,612
-  ExploitDB      : 27,341
-  Model size     : 48.2 MB
+  Build date     : <timestamp>
+  ... counts from the active feed snapshot ...
 ```
 
 If `Status: missing`, the local corpus calibration state is unavailable and all

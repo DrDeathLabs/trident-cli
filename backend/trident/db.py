@@ -18,13 +18,15 @@ if settings.db.backend == "sqlite":
     # for a single-user desktop process (irrelevant for Postgres, so scoped to
     # this branch only).
     engine = create_engine(
-        settings.db.url, pool_pre_ping=True, connect_args={"check_same_thread": False},
+        settings.db.url, pool_pre_ping=True,
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
 
     @event.listens_for(engine, "connect")
     def _sqlite_pragmas(dbapi_conn, _record):
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")
         cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
 else:
@@ -72,6 +74,8 @@ def apply_migrations() -> None:
     _migrations: dict[str, dict[str, str]] = {
         "findings": {
             "suppression_reason": "TEXT",
+            "scanner_severity": "VARCHAR(16)",
+            "model_severity": "VARCHAR(16)",
         },
     }
 

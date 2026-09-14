@@ -14,10 +14,32 @@ venv/
 .ruff_cache/
 
 # Local release validation data
+.acceptance/
+acceptance/
+validation/
+benchmark/
+benchmarks/
+evidence/
+reports/
 .release-smoke-data/
 backend/.release-smoke-data/
 backend/.wsl-smoke-data/
 *.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.ledger
+*.stdout
+*.stderr
+*.stdout.txt
+*.stderr.txt
+temp-worktrees/
+release-worktrees/
+trident-*-validation*.zip
+trident-*-handoff*.zip
+*-validation-package*.zip
+scanner-corpus/
+model-ledgers/
 
 # Private or non-CLI source kept outside the public repository
 vulnbank/
@@ -29,6 +51,8 @@ docs/_extracted_*.txt
 # Generated build output
 build/
 dist/
+*.whl
+*.tar.gz
 
 # Secrets & local config
 .env

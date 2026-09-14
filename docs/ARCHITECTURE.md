@@ -2,7 +2,7 @@
 
 Trident is a local, single-process CLI. It uses SQLite for scan state and
 in-process task execution; it does not require a server, queue, or external
-database.
+database for the standalone workflow.
 
 ## Components
 
@@ -10,10 +10,12 @@ database.
 |-----------|----------|----------------|
 | CLI entry point | backend/trident/cli.py | Commands, options, exit codes |
 | Configuration | backend/trident/config.py and config_manager.py | Environment and TOML settings |
-| Ingest | backend/trident/ingest/ | Local paths, Git URLs, and ZIP archives |
+| Ingest | backend/trident/ingest/ | Local paths, Git URLs, ZIP archives, and supported external JSON |
 | Scanner adapters | backend/trident/tools/ | Invoke scanners and normalize findings |
-| Correlation | backend/trident/correlate.py | Deduplicate corroborating findings |
+| Normalized findings | backend/trident/models.py and tools/base.py | Common finding contract and preserved raw evidence |
+| Correlation | backend/trident/correlate.py | Separate exact duplicates from related evidence |
 | Expert review | backend/trident/experts/ and deliberation.py | LLM council review |
+| Attack-chain review | backend/trident/experts/redteam.py and orchestrator.py | Review credible multi-finding paths |
 | Triage adjustments | backend/trident/triage.py and reachability/ | Deterministic factor correction and reachability evidence |
 | Corpus calibration | backend/trident/calibration/ | Optional vulnerability corpus, CWE profiles, and model artifact |
 | Exporters | backend/trident/reporters/exporters.py | Table, JSON, SARIF, and triage-sidecar output |
@@ -22,37 +24,30 @@ database.
 ## Scan pipeline
 
 ~~~text
-workspace
-   |
-   v
-ingest and language detection
-   |
-   v
-scanner adapters -> raw findings
-   |
-   v
-correlation and deduplication
-   |
-   v
-iterative expert review
-   |
-   +-> judge and cross-examination
-   +-> novel finding discovery
-   +-> red-team attack-chain analysis
-   |
-   v
-confirmed findings
-   |
-   v
-automatic triage adjustments and P0-P4 computation
-   |
-   v
-table, JSON, SARIF, and optional triage sidecar
+Source / Git / ZIP --------------------+
+                                      v
+Native scanners ----------------> normalized finding model
+External JSON -----------------------+  |
+  SonarQube / Dependency-Check          v
+                                  correlation
+                                      |
+                              Council of Experts
+                                      |
+                              Judge / cross-exam
+                                      |
+                              attack-chain review
+                                      |
+                                    guards
+                                      |
+                              deterministic P0-P4 triage
+                                      |
+                              JSON / SARIF / table reports
 ~~~
 
-The CLI runs scanner adapters as subprocesses. Missing optional system tools
-are reported or skipped according to the adapter; the scan still records the
-tool status.
+Native scans run scanner adapters as subprocesses. With `--input-file`, the
+supported report adapter path is used instead and scanner subprocesses are not
+started. Imported records retain report-only evidence unless `--source-dir`
+provides source context.
 
 ## Persistence and concurrency
 
@@ -71,6 +66,12 @@ receive code context.
 Ollama, OpenAI, and Anthropic backends implement the same LLM interface.
 Cloud backends receive prompts and code excerpts required for review; choose a
 backend that matches the sensitivity of the code being scanned.
+
+Ollama Cloud responses are validated in the application. Trident preserves the
+requested and returned model identities, accepts only the exact native identity
+for a requested cloud alias, and rejects unrelated substitutions. Malformed,
+timed-out, refused, or semantically invalid responses remain unresolved and do
+not become positive or negative security verdicts.
 
 ## Package boundary
 

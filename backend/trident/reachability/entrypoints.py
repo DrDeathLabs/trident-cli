@@ -20,11 +20,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-_SKIP_DIRS = frozenset({
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    "vendor", "dist", "build", ".pytest_cache", "migrations",
-    "alembic", "tests", "test",
-})
+from trident.workspace import iter_workspace_files
+
 _PY_EXT  = frozenset({".py"})
 _JS_EXT  = frozenset({".js", ".ts", ".jsx", ".tsx"})
 _GO_EXT  = frozenset({".go"})
@@ -131,9 +128,7 @@ def find_entry_points(workspace: str) -> list[EntryPoint]:
 
 
 def _walk(root: Path):
-    for p in root.rglob("*"):
-        if p.is_file() and not any(part in _SKIP_DIRS for part in p.parts):
-            yield p
+    yield from iter_workspace_files(root, skip_tests=True)
 
 
 def _scan_python(rel: str, text: str) -> list[EntryPoint]:

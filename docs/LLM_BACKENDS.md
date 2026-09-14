@@ -8,7 +8,8 @@ Anthropic.
 
 ## Ollama (default)
 
-Ollama runs models locally on your machine. This is the default backend and the recommended choice for privacy-sensitive code.
+Ollama is the default backend. It can use a local model through the Ollama
+gateway or an Ollama Cloud-tagged model through the same native API.
 
 ### Setup
 
@@ -21,13 +22,22 @@ ollama pull gemma4:31b-cloud        # recommended - default council model
 ollama pull qwen3-embedding:0.6b    # required for semantic deduplication
 ```
 
-3. Configure Trident:
+3. Configure Trident for the current process or scan:
 
 ```bash
-trident config set llm.backend ollama
-trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model gemma4:31b-cloud
+TRIDENT_LLM_BACKEND=ollama TRIDENT_OLLAMA_HOST=http://localhost:11434 \
+EXPERT_MODEL=gemma4:31b-cloud trident scan .
 ```
+
+The CLI also accepts `trident scan . --backend ollama --model gemma4:31b-cloud`.
+Use `trident config show` to inspect persisted configuration values and
+`trident config set` for configuration-manager settings such as the severity
+gate and iteration limit.
+
+For direct Cloud API access instead of the local gateway, set
+`TRIDENT_OLLAMA_MODE=direct_cloud` and provide `OLLAMA_API_KEY`; the direct
+endpoint defaults to `https://ollama.com`. The local gateway mode is generally
+the simplest way to use an Ollama account with cloud-tagged models.
 
 ### Model recommendations
 
@@ -49,8 +59,20 @@ trident config set llm.base_url http://192.168.1.50:11434
 Or with the environment variable:
 
 ```bash
-OLLAMA_HOST=http://192.168.1.50:11434 trident scan .
+TRIDENT_OLLAMA_HOST=http://192.168.1.50:11434 trident scan .
 ```
+
+### Cloud model identity
+
+When a cloud-tagged request is returned by Ollama with its native model name,
+Trident records both values and accepts only that exact one-way alias mapping.
+For example, `gemma4:31b-cloud` may return `gemma4:31b`; the requested and
+actual identities are both preserved in the decision metadata. An unrelated
+returned model is rejected. Trident never silently falls back to another model.
+
+Ollama Cloud does not provide server-enforced JSON schemas through the native
+API path. Trident therefore performs typed application-side validation,
+bounded JSON repair, semantic validation, and fail-closed unresolved handling.
 
 ---
 

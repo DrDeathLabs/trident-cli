@@ -80,8 +80,30 @@ async def _run_scan(
         if not ok:
             return False
         await asyncio.to_thread(scan_job_body, job_id)
+        # run_scan records orchestration failures on the Job rather than
+        # raising them through the worker boundary. Surface those failures to
+        # the CLI as exit code 2 instead of emitting an apparently clean report.
+        from trident.db import db_session
+        from trident.models import Job
+        with db_session() as db:
+            if (job := db.get(Job, job_id)) is None or job.status == "failed":
+                return False
         if run_guards:
             await asyncio.to_thread(triage_job_body, job_id)
+        # Triage can be complete while individual model requests remain
+        # unresolved. Make that integrity state visible to the job/report
+        # consumers instead of presenting it as a clean completion.
+        with db_session() as db:
+            from trident.models import Finding, Job, JobStatus
+            job = db.get(Job, job_id)
+            unresolved = db.query(Finding).filter(
+                Finding.job_id == job_id,
+                Finding.status.in_(("unresolved", "unresolved_model_error", "unreviewed")),
+            ).count()
+            if job and unresolved and job.status != JobStatus.failed.value:
+                job.status = JobStatus.completed_with_unresolved.value
+                job.error = f"{unresolved} finding(s) remain unresolved; no fail-open verdict was assigned"
+                db.commit()
         return True
     finally:
         if progress_task is not None and not progress_task.done():
@@ -101,7 +123,7 @@ async def _run_scan(
                 pass
 
 
-def _render_table(findings: list, name: str) -> str:
+def _render_table(findings: list, name: str, actions: list[dict] | None = None) -> str:
     counts: Counter = Counter(f.priority or "??" for f in findings)
     lines = [
         f"Trident Scan - {name}",
@@ -120,7 +142,30 @@ def _render_table(findings: list, name: str) -> str:
             "-",
         )
         lines.append(f"  {tier:<5}| {n:>5} | {sample}")
-    lines += ["-" * 62, f"  Total confirmed: {len(findings)}", "", "Triage plan:"]
+    basis_counts: Counter = Counter(
+        (getattr(f, "triage", None) or {}).get("evidence_basis") or "unknown"
+        for f in findings
+    )
+    basis_text = ", ".join(f"{basis}={count}" for basis, count in basis_counts.items()) or "none"
+    lines += [
+        "-" * 62,
+        f"  Total confirmed: {len(findings)}",
+        f"  Retained for remediation: {len(findings)}",
+        f"  Evidence basis: {basis_text}",
+        "",
+        "Triage plan:",
+    ]
+    if actions is not None:
+        lines.extend(["", f"Remediation actions: {len(actions)}"])
+        for action in actions:
+            label = " ".join(filter(None, [action.get("package"), action.get("version")]))
+            label = label or action.get("action_id", "")
+            lines.append(
+                f"  {action.get('action_id')} | {label} | "
+                f"highest={action.get('highest_priority') or 'untriaged'} | "
+                f"occurrences={action.get('occurrence_count', 0)}"
+            )
+        lines.append("")
     from trident.triage import PLAYBOOK
     for tier in ("P0", "P1", "P2", "P3", "P4"):
         playbook = PLAYBOOK[tier]
@@ -191,7 +236,27 @@ def cli():
 # ---------------------------------------------------------------------------
 
 @cli.command()
-@click.argument("workspace", default=".")
+@click.argument("workspace", required=False, default=None)
+@click.option(
+    "--input-file", "input_files", multiple=True, type=click.Path(dir_okay=False),
+    help="Import a SonarQube or Dependency-Check JSON report instead of running scanners. Repeatable.",
+)
+@click.option(
+    "--input-format", type=click.Choice(["auto", "sonarqube", "dependency-check"]),
+    default="auto", show_default=True, help="Format for imported JSON reports.",
+)
+@click.option(
+    "--source-dir", type=click.Path(file_okay=False), default=None,
+    help="Optional source context for imported findings; scanner tools are not run.",
+)
+@click.option(
+    "--scanner-corpus", type=click.Path(exists=True, dir_okay=False), default=None,
+    help="Replay a frozen scanner corpus through correlation, model review, triage, and exporters.",
+)
+@click.option(
+    "--discover-novel", is_flag=True, default=False,
+    help="With --source-dir, allow source-based novel discovery in import mode.",
+)
 @click.option(
     "--format", "output_format",
     type=click.Choice(["table", "sarif", "json"]),
@@ -249,6 +314,11 @@ def cli():
 def scan(
     ctx,
     workspace: str,
+    input_files: tuple[str, ...],
+    input_format: str,
+    source_dir: str | None,
+    scanner_corpus: str | None,
+    discover_novel: bool,
     output_format: str | None,
     output_format_legacy: str | None,
     output_file: str | None,
@@ -262,16 +332,19 @@ def scan(
     quiet: bool,
     no_guards: bool,
 ):
-    """Scan WORKSPACE and report security findings.
+    """Scan WORKSPACE or import external scanner reports and report findings.
 
-    WORKSPACE can be a local directory path (default: current directory),
+    WORKSPACE can be a local directory path,
     a git URL (https:// or git@), or a .zip archive path.
+    With --input-file, scanner subprocesses are not run.
 
     Exit codes: 0 = clean, 1 = findings at/above severity gate, 2 = scan error.
 
     \b
     Examples:
       trident scan .
+      trident scan --input-file sonar.json
+      trident scan --input-file sonar.json --input-file dependency-check.json
       trident scan . --format sarif > results.sarif
       trident scan ./myrepo --backend openai --model gpt-4o
       trident scan ./myrepo --severity-gate critical
@@ -280,6 +353,16 @@ def scan(
     from trident.config import settings
     from trident.db import db_session, engine
     from trident.models import Base, Finding, Job
+
+    workspace = workspace or "."
+    if scanner_corpus and input_files:
+        raise click.UsageError("--scanner-corpus cannot be combined with --input-file")
+    if discover_novel and not input_files:
+        raise click.UsageError("--discover-novel requires --input-file")
+    if discover_novel and not source_dir:
+        raise click.UsageError("--discover-novel requires --source-dir")
+    if source_dir and not input_files:
+        raise click.UsageError("--source-dir requires --input-file")
 
     # Resolve output format (--format wins over deprecated --output/-o)
     resolved_format = output_format or output_format_legacy
@@ -324,9 +407,25 @@ def scan(
         except Exception:
             pass
 
-    source_type, source_ref = _detect_source(workspace)
-    name = target_name or Path(workspace).name or workspace
+    if input_files:
+        source_type = "import"
+        source_ref = str(Path(input_files[0]).resolve())
+        name = target_name or (Path(source_dir).name if source_dir else "imported reports")
+    else:
+        source_type, source_ref = _detect_source(workspace)
+        name = target_name or Path(workspace).name or workspace
     profile: dict = {}
+    if scanner_corpus:
+        profile["scanner_corpus"] = str(Path(scanner_corpus).resolve())
+    if input_files:
+        from trident.ingest.importers import prepare_import
+        try:
+            _reports, import_profile = prepare_import(list(input_files), input_format, source_dir)
+        except Exception as exc:
+            click.echo(f"[trident] import error: {exc}", err=True)
+            sys.exit(2)
+        profile.update(import_profile)
+        profile["discover_novel"] = bool(discover_novel)
     if max_iterations is not None:
         profile["max_iterations"] = max_iterations
     else:
@@ -394,7 +493,9 @@ def scan(
             from trident.reporters.exporters import to_json
             payload = json.dumps(to_json(db, job_id), indent=2)
         else:
-            payload = _render_table(confirmed, name)
+            from trident.reporters.exporters import _remediation_actions
+            payload = _render_table(confirmed, name,
+                                    _remediation_actions(db, job_id, confirmed))
 
         triage_payload = None
         if triage_output_file:
@@ -431,6 +532,17 @@ def scan(
                 err=True,
             )
 
+    # An unresolved model decision is a scan-integrity error, not an ordinary
+    # severity-gate finding.  Check it before the P-tier gate so exit status
+    # cannot misrepresent a degraded result as a normal security failure.
+    with db_session() as db:
+        from trident.models import Job
+        final_job = db.get(Job, job_id)
+        if final_job and final_job.status == "completed_with_unresolved":
+            if not quiet:
+                click.echo("[trident] unresolved model decisions remain - exit 2", err=True)
+            sys.exit(2)
+
     if blocker_count:
         if not quiet:
             click.echo(
@@ -440,7 +552,6 @@ def scan(
         sys.exit(1)
     elif not quiet:
         click.echo(f"[trident] no findings at or above {fail_on_tier} - clean", err=True)
-
 
 # ---------------------------------------------------------------------------
 # help
@@ -821,6 +932,74 @@ def model_path_cmd():
     """Print the calibration data directory path."""
     from trident import model_manager
     click.echo(model_manager._data_dir())
+
+
+# ---------------------------------------------------------------------------
+# validation / replay
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def validate():
+    """Create and replay deterministic validation evidence."""
+
+
+@validate.command("export-corpus")
+@click.argument("job_id")
+@click.option("--output", "output_file", required=True, type=click.Path())
+def validate_export_corpus(job_id: str, output_file: str):
+    """Export scanner findings from JOB_ID to a frozen, scanner-free corpus."""
+    from trident.db import db_session
+    from trident.validation.replay import export_corpus
+    with db_session() as db:
+        payload = export_corpus(db, job_id, output_file)
+    click.echo(json.dumps({"output": str(Path(output_file).resolve()),
+                           "records": len(payload["records"]),
+                           "corpus_sha256": payload["corpus_sha256"],
+                           "scanner_subprocesses": False}, indent=2))
+
+
+@validate.command("replay-corpus")
+@click.argument("corpus", type=click.Path(exists=True, dir_okay=False))
+@click.option("--output", "output_file", required=True, type=click.Path())
+def validate_replay_corpus(corpus: str, output_file: str):
+    """Restore a frozen scanner corpus without launching scanner subprocesses."""
+    from trident.db import db_session, engine
+    from trident.models import Base
+    from trident.validation.replay import restore_corpus
+    Base.metadata.create_all(engine)
+    with db_session() as db:
+        job = restore_corpus(db, corpus)
+        result = {"format": "trident-frozen-scanner-replay", "job_id": job.id,
+                  "status": job.status, "records": len(job.findings),
+                  "scanner_subprocesses": False,
+                  "corpus": str(Path(corpus).resolve())}
+    Path(output_file).write_text(json.dumps(result, indent=2), encoding="utf-8")
+    click.echo(json.dumps({**result, "output": str(Path(output_file).resolve())}, indent=2))
+
+
+@validate.command("replay-decisions")
+@click.argument("artifact", type=click.Path(exists=True, dir_okay=False))
+def validate_replay_decisions(artifact: str):
+    """Validate an LLM decision replay artifact without model or scanner calls."""
+    from trident.validation.replay import replay_decisions
+    try:
+        result = replay_decisions(artifact)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2))
+
+
+@validate.command("export-decisions")
+@click.argument("run_id")
+@click.option("--output", "output_file", required=True, type=click.Path())
+def validate_export_decisions(run_id: str, output_file: str):
+    """Export the durable typed-decision ledger for RUN_ID."""
+    from trident.db import db_session
+    from trident.validation.replay import export_decisions
+    with db_session() as db:
+        payload = export_decisions(db, run_id, output_file)
+    click.echo(json.dumps({"output": str(Path(output_file).resolve()),
+                           "run_id": run_id, "decisions": len(payload["decisions"])}, indent=2))
 
 
 # ---------------------------------------------------------------------------

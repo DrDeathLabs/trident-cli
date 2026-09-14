@@ -39,6 +39,7 @@ from trident.models import (
     SEVERITY_RANK, AttackChain, Finding, FindingVerdict, correlation_key, stable_finding_hash,
 )
 from trident.reliability.schemas import ReviewVerdict
+from trident.workspace import iter_workspace_files
 
 UNCERTAIN_LOW, UNCERTAIN_HIGH = 0.35, 0.75
 CONFIDENT = 0.75
@@ -96,9 +97,13 @@ def _persist_review(db, finding, expert, res, iteration, role) -> _V | None:
             rationale=err[:1000], model=expert.model, iteration=iteration,
         ))
         finding.review_error = err[:1000]
+        finding.status = "unresolved_model_error"
         expert._save_debate(db, finding.id, role, f"[unparseable response] {err[:300]}")
         publish_event(db, finding.job_id, EventType.FINDING_PARSE_ERROR, {
             "finding_id": finding.id, "expert": expert.name, "error": err[:300],
+        })
+        publish_event(db, finding.job_id, EventType.FINDING_UNRESOLVED, {
+            "finding_id": finding.id, "stage": role, "reason": err[:300],
         })
         return None
 
@@ -186,10 +191,62 @@ def _apply_enrichment(finding: Finding, valid: list[_V]) -> None:
     if obj.owasp and not finding.owasp:
         finding.owasp = obj.owasp
     if obj.severity:
-        finding.severity = obj.severity
+        # Keep scanner/import severity immutable. This is the model's
+        # assessment, not a rewrite of the original scanner evidence.
+        finding.model_severity = obj.severity
 
 
 def _set_status(db, finding, status, confidence, iteration, reason=""):
+    from trident.ingest.importers import is_imported_sonarqube_code_smell
+
+    if is_imported_sonarqube_code_smell(finding) and status in {
+        "confirmed", "false_positive", "disputed",
+    }:
+        finding.status = "out_of_scope"
+        finding.confidence = confidence
+        finding.review_error = None
+        finding.triage = {
+            **(finding.triage or {}),
+            "scope": "non_security_quality_issue",
+            "review_verdict": status,
+            "scope_rationale": (
+                "SonarQube classified this record as CODE_SMELL. It is retained "
+                "as a quality finding, but excluded from Trident's security "
+                "remediation queue."
+            ),
+        }
+        publish_event(db, finding.job_id, EventType.FINDING_OUT_OF_SCOPE, {
+            "finding_id": finding.id,
+            "reason": "imported SonarQube CODE_SMELL is a non-security quality issue",
+            "original_verdict": status,
+        })
+        return
+    if status == "false_positive":
+        # A model refutation must not erase a strong Dependency-Check match.
+        # Keep the disagreement in the work queue until a reviewer can assess
+        # the package and affected-version evidence with source context.
+        from trident.ingest.importers import dependency_check_match_evidence
+
+        match = dependency_check_match_evidence(finding)
+        if match:
+            finding.status = "disputed"
+            finding.confidence = confidence
+            finding.triage = {
+                **(finding.triage or {}),
+                "contested": True,
+                "import_evidence_conflict": {
+                    "reason": "model refutation conflicts with Dependency-Check's explicit matched vulnerability evidence",
+                    "model_reason": reason[:1000],
+                    **match,
+                },
+            }
+            publish_event(db, finding.job_id, EventType.FINDING_IMPORT_CONFLICT, {
+                "finding_id": finding.id,
+                "rule_id": finding.rule_id,
+                "reason": "model refutation conflicts with explicit Dependency-Check match",
+                "matched_software": match["matched_software"],
+            })
+            return
     finding.status = status
     finding.confidence = confidence
     if status == "confirmed":
@@ -224,13 +281,13 @@ def _apply_consensus(db, finding, valid, iteration):
 
 def _apply_judge(db, judge: JudgeExpert, finding, valid, iteration, budget):
     if not budget.take(1):
-        # Out of budget: fall back to expert consensus if any, else leave for retry.
-        if valid:
-            _apply_consensus(db, finding, valid, iteration)
-        else:
-            finding.status = "unreviewed"
+        finding.status = "unresolved_model_error"
+        finding.review_error = "judge not executed: LLM budget exhausted"
+        publish_event(db, finding.job_id, EventType.FINDING_UNRESOLVED, {
+            "finding_id": finding.id, "stage": "judge", "reason": finding.review_error,
+        })
         return
-    res = judge.invoke_judge(finding, [v.__dict__ for v in valid])
+    res = judge.invoke_judge(finding, [v.__dict__ for v in valid], iteration=iteration)
     if isinstance(res, Exception) or not res.ok:
         err = str(getattr(res, "error", res) or "judge parse failure")
         db.add(FindingVerdict(
@@ -238,12 +295,13 @@ def _apply_judge(db, judge: JudgeExpert, finding, valid, iteration, budget):
             persona=judge.persona, verdict="parse_error", confidence=0.0,
             rationale=err[:1000], model=judge.model, iteration=iteration,
         ))
-        # Fall back to the experts' consensus rather than inventing a dispute.
-        if valid:
-            _apply_consensus(db, finding, valid, iteration)
-        else:
-            finding.status = "unreviewed"
-            finding.review_error = err[:1000]
+        # A failed judge cannot be laundered into either a positive or negative
+        # security verdict, even when experts happened to agree.
+        finding.status = "unresolved_model_error"
+        finding.review_error = err[:1000]
+        publish_event(db, finding.job_id, EventType.FINDING_UNRESOLVED, {
+            "finding_id": finding.id, "stage": "judge", "reason": err[:300],
+        })
         return
 
     jv = res.obj
@@ -261,9 +319,13 @@ def _apply_judge(db, judge: JudgeExpert, finding, valid, iteration, budget):
         "false_positive_reason": jv.false_positive_reason,
     })
     if jv.final_severity:
-        finding.severity = jv.final_severity
+        finding.model_severity = jv.final_severity
     if jv.final_verdict == "confirmed":
         _apply_enrichment(finding, valid)
+        if jv.final_severity:
+            # The judge is the final model opinion for this decision. Apply it
+            # after expert enrichment so it is not overwritten by a peer.
+            finding.model_severity = jv.final_severity
         _set_status(db, finding, "confirmed", jv.final_confidence, iteration)
     elif jv.final_verdict == "refuted":
         _set_status(db, finding, "false_positive", jv.final_confidence, iteration,
@@ -296,7 +358,7 @@ def run_reviews(db: Session, review_experts, judge: JudgeExpert, findings, itera
 
     # Persist + stream each review as it completes (live council, and completed
     # work survives an interruption) instead of after the whole batch.
-    _parallel(lambda t: t[1].invoke_review(t[0], budget=budget, agentic=False), tasks, budget,
+    _parallel(lambda t: t[1].invoke_review(t[0], budget=budget, agentic=False, iteration=iteration), tasks, budget,
               on_result=_persist_incremental)
     db.flush()
 
@@ -319,7 +381,8 @@ def run_reviews(db: Session, review_experts, judge: JudgeExpert, findings, itera
             cross_tasks = [(f, e) for e in relevant]
             cross = _parallel(
                 lambda t: t[1].invoke_review(
-                    t[0], peers=_peers_excluding(valid, t[1].persona), budget=budget),
+                    t[0], peers=_peers_excluding(valid, t[1].persona), budget=budget,
+                    iteration=iteration),
                 cross_tasks, budget,
             )
             newv: list[_V] = []
@@ -346,7 +409,6 @@ _CODE_EXT = (".py", ".go", ".js", ".ts", ".jsx", ".tsx", ".java", ".rb", ".php",
              ".html", ".htm", ".jinja", ".jinja2", ".j2", ".ejs", ".erb", ".vue")
 _ENTRY_HINTS = ("main", "app", "index", "server", "route", "handler", "api",
                 "controller", "view", "template", "auth", "admin", "config", "settings")
-_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "vendor", "dist", "build"}
 
 # Dangerous-sink patterns, language-agnostic where possible. Novel discovery ranks
 # files by where these actually occur (not filename/size) and seeds the experts
@@ -397,27 +459,26 @@ def _rank_files(workspace: str, seen: set[str],
     of (line, class) leads used to window the seed content.
     """
     cands: list[tuple[int, int, str, list[tuple[int, str]]]] = []  # (-score, size, rel, hotspots)
-    for root, dirs, files in os.walk(workspace):
-        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
-        for fn in files:
-            if not fn.endswith(_CODE_EXT):
-                continue
-            rel = os.path.relpath(os.path.join(root, fn), workspace).replace(os.sep, "/")
-            if rel in seen:
-                continue
-            low = rel.lower()
-            try:
-                with open(os.path.join(root, fn), encoding="utf-8", errors="replace") as fh:
-                    text = fh.read(_MAX_SCAN_BYTES)
-                size = len(text)
-            except OSError:
-                text, size = "", 0
-            hotspots = _scan_hotspots(text)
-            sink_score = sum(_LABEL_WEIGHT.get(lbl, 1) for _, lbl in hotspots)
-            hint_score = sum(1 for h in _ENTRY_HINTS if h in low)
-            # Sinks dominate; entrypoint hints only break ties among equal sink scores.
-            score = sink_score * 10 + hint_score
-            cands.append((-score, size, rel, hotspots[:_MAX_HOTSPOTS_PER_FILE]))
+    for path in iter_workspace_files(workspace):
+        fn = path.name
+        if not fn.endswith(_CODE_EXT):
+            continue
+        rel = os.path.relpath(path, workspace).replace(os.sep, "/")
+        if rel in seen:
+            continue
+        low = rel.lower()
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                text = fh.read(_MAX_SCAN_BYTES)
+            size = len(text)
+        except OSError:
+            text, size = "", 0
+        hotspots = _scan_hotspots(text)
+        sink_score = sum(_LABEL_WEIGHT.get(lbl, 1) for _, lbl in hotspots)
+        hint_score = sum(1 for h in _ENTRY_HINTS if h in low)
+        # Sinks dominate; entrypoint hints only break ties among equal sink scores.
+        score = sink_score * 10 + hint_score
+        cands.append((-score, size, rel, hotspots[:_MAX_HOTSPOTS_PER_FILE]))
     # highest score first; among equals prefer smaller files (cheaper to read whole)
     cands.sort(key=lambda c: (c[0], c[1]))
     return [(rel, hs) for _, _, rel, hs in cands[:limit]]
@@ -487,7 +548,7 @@ def collect_novel(db: Session, experts, job_id: str, workspace: str, iteration: 
     }
 
     review_experts = [e for e in experts if e.name not in ("judge", "redteam")]
-    results = _parallel(lambda e: e.invoke_propose(files_block, budget=budget), review_experts, budget)
+    results = _parallel(lambda e: e.invoke_propose(files_block, budget=budget, iteration=iteration), review_experts, budget)
 
     novel: list[Finding] = []
     for expert, res in results:
@@ -514,7 +575,8 @@ def collect_novel(db: Session, experts, job_id: str, workspace: str, iteration: 
                 correlation_key=key,
                 tool=f"expert:{expert.name}",
                 rule_id=f"novel-{expert.name}",
-                severity=nf.severity, confidence=nf.confidence,
+                severity=nf.severity, scanner_severity=None,
+                model_severity=nf.severity, confidence=nf.confidence,
                 title=nf.title, description=nf.description,
                 file=nf.file, line_start=nf.line_start, line_end=nf.line_end or nf.line_start,
                 snippet=nf.snippet, cwe=nf.cwe, recommendation=nf.recommendation,
@@ -534,12 +596,13 @@ def build_attack_chains(db: Session, job_id: str, redteam, confirmed: list[Findi
     """Ask the red team to chain confirmed findings; persist AttackChains + per-finding paths."""
     if not confirmed or not budget.take(1):
         return
-    res = redteam.invoke_chains(confirmed)
+    res = redteam.invoke_chains(confirmed, iteration=iteration)
     budget.used += max(0, getattr(res, "llm_calls", 1) - 1)
     if not getattr(res, "ok", False):
         return
     by_id = {f.id: f for f in confirmed}
     per_finding: dict[str, list[dict]] = {}
+    chain_basis = "source_grounded" if redteam.workspace else "report_derived"
     for path in res.obj.attack_paths:
         used = [fid for fid in path.findings_used if fid in by_id]
         chain = AttackChain(
@@ -548,8 +611,11 @@ def build_attack_chains(db: Session, job_id: str, redteam, confirmed: list[Findi
         )
         chain.findings = [by_id[fid] for fid in used]
         db.add(chain)
-        path_dict = {"goal": path.goal, "steps": path.steps,
-                     "likelihood": path.likelihood, "findings_used": used}
+        path_dict = {
+            "goal": path.goal, "steps": path.steps,
+            "likelihood": path.likelihood, "findings_used": used,
+            "basis": chain_basis,
+        }
         for fid in used:
             per_finding.setdefault(fid, []).append(path_dict)
     # Each confirmed finding carries only the paths it actually participates in.

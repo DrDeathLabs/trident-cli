@@ -1,6 +1,6 @@
 # Trident CLI documentation
 
-Trident is a local command-line security scanner built around evidence-preserving
+Trident is a local command-line security analysis engine built around evidence-preserving
 triage. These documents explain how twelve scanners find candidates, how review
 separates real findings from noise, how deterministic triage computes a P0-P4
 priority, and how the result becomes a worked queue without losing the audit
@@ -22,6 +22,7 @@ trail. They also document where human review remains mandatory.
 - [Triage](TRIAGE.md) - P0-P4 prioritization, factors, playbooks, and audit data.
 - [Attack chains](ATTACK_CHAINS.md) - multi-finding escalation context.
 - [Output formats](OUTPUT_FORMATS.md) - table, JSON, SARIF, and triage sidecars.
+- [Validation](VALIDATION.md) - approved public validation summary and scope.
 
 ## Configuration and model reviewers
 
@@ -54,8 +55,6 @@ trail. They also document where human review remains mandatory.
 - [Security policy](../SECURITY.md) - vulnerability reporting and sensitive data
   handling.
 - [Third-party notices](../THIRD-PARTY-NOTICES.md) - scanner licensing.
-- [Internal evaluation notes](internal/) - research and evaluation material,
-  not required for ordinary CLI use.
 
 ## Capability status
 
@@ -67,6 +66,7 @@ trail. They also document where human review remains mandatory.
 | Automatic P0-P4 triage | Supported | [Triage](TRIAGE.md) |
 | Table, JSON, and SARIF reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
 | Full triage sidecar reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
+| SonarQube and OWASP Dependency-Check JSON import | Supported | [Scanning](SCANNING.md) |
 | CWE-profile triage adjustment | Optional; requires refresh | [Corpus calibration](CORPUS_GUARD_MODEL.md) |
 | Agentic exploration | Supported, optional; off by default | [Agentic exploration](AGENTIC_MODE.md) |
 | Runtime penetration testing | Unsupported | [Limitations](LIMITATIONS.md) |

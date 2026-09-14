@@ -71,6 +71,9 @@ class JobStatus(str, PyEnum):
     ingesting = "ingesting"
     scanning = "scanning"
     complete = "complete"
+    completed_with_unresolved = "completed_with_unresolved"
+    interrupted = "interrupted"
+    degraded = "degraded"
     failed = "failed"
     cancelled = "cancelled"
 
@@ -140,6 +143,11 @@ class Finding(Base):
     tool: Mapped[str] = mapped_column(String(64))   # semgrep|bandit|expert:injection|...
     rule_id: Mapped[str] = mapped_column(String(128))
     severity: Mapped[str] = mapped_column(String(16), default=Severity.medium.value, index=True)
+    # Scanner/import severity is immutable evidence.  Model and judge severity
+    # are stored separately so review can enrich a finding without rewriting
+    # what the scanner actually reported.
+    scanner_severity: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    model_severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     title: Mapped[str] = mapped_column(String(512))
     description: Mapped[str] = mapped_column(Text, default="")
@@ -158,7 +166,7 @@ class Finding(Base):
     # Triage: priority tier (P0..P4) + the code-grounded factors it was computed from.
     priority: Mapped[str | None] = mapped_column(String(4), nullable=True, index=True)
     triage: Mapped[dict] = mapped_column(JSON, default=dict)
-    # raw|confirmed|disputed|false_positive|duplicate|parse_error|unreviewed|suppressed
+    # raw|confirmed|disputed|false_positive|duplicate|related|parse_error|unreviewed|suppressed
     status: Mapped[str] = mapped_column(String(32), default="raw")
     suppression_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     iteration: Mapped[int] = mapped_column(Integer, default=0)
@@ -221,6 +229,64 @@ class FindingVerdict(Base):
     finding: Mapped["Finding"] = relationship(back_populates="verdicts")
 
     __table_args__ = (Index("ix_verdicts_finding_expert", "finding_id", "expert"),)
+
+
+class LLMRequest(Base):
+    """Durable audit record for one logical typed model decision.
+
+    The request payload is represented by hashes plus redacted messages; secrets
+    and authorization headers are never persisted.  Attempts contain the raw
+    model text and transport outcome so retries and unresolved decisions are
+    reproducible without treating an invalid response as a verdict.
+    """
+    __tablename__ = "llm_requests"
+
+    request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    finding_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("findings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    task_type: Mapped[str] = mapped_column(String(64), index=True)
+    council_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    iteration: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_template_version: Mapped[str] = mapped_column(String(32), default="v1")
+    schema_version: Mapped[str] = mapped_column(String(32), default="v1")
+    model: Mapped[str] = mapped_column(String(128))
+    endpoint_mode: Mapped[str] = mapped_column(String(32), default="local_gateway")
+    request_settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    request_hash: Mapped[str] = mapped_column(String(64), index=True)
+    input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    validation_errors: Mapped[list] = mapped_column(JSON, default=list)
+    semantic_validation_errors: Mapped[list] = mapped_column(JSON, default=list)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    transport_status: Mapped[str] = mapped_column(String(32), default="pending")
+    response_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    final_accepted_decision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    replay_source: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LLMRequestAttempt(Base):
+    """One transport/repair attempt belonging to an :class:`LLMRequest`."""
+    __tablename__ = "llm_request_attempts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    request_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("llm_requests.request_id", ondelete="CASCADE"), index=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    transport_status: Mapped[str] = mapped_column(String(32))
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    response_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    request: Mapped["LLMRequest"] = relationship()
 
 
 class TriageOverride(Base):
@@ -391,6 +457,8 @@ class FindingOut(BaseModel):
     tool: str
     rule_id: str
     severity: str
+    scanner_severity: str | None = None
+    model_severity: str | None = None
     confidence: float
     title: str
     description: str
@@ -405,6 +473,7 @@ class FindingOut(BaseModel):
     narrative: str | None = None
     exploit_scenario: str | None = None
     attack_paths: list = Field(default_factory=list)
+    raw_outputs: dict = Field(default_factory=dict)
     correlation_key: str | None = None
     canonical_id: str | None = None
     corroborating_tools: list = Field(default_factory=list)
@@ -423,6 +492,11 @@ class FindingOut(BaseModel):
     @field_validator("triage", mode="before")
     @classmethod
     def _triage_none(cls, v):
+        return v or {}
+
+    @field_validator("raw_outputs", mode="before")
+    @classmethod
+    def _raw_outputs_none(cls, v):
         return v or {}
 
     @field_validator("corroborating_tools", "attack_paths", mode="before")
