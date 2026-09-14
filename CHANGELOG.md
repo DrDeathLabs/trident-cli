@@ -3,6 +3,14 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.1] - 2026-09-14
+
+### Maintenance
+
+- Removed generated release audit artifacts from the public source tree.
+- Normalized development path examples.
+- Expanded repository hygiene protections for generated release evidence.
+
 ## [0.2.0] - 2026-09-13
 
 ### Added

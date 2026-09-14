@@ -172,7 +172,7 @@ def ingest(db: Session, job_id: str, source_type: str, source_ref: str) -> tuple
         # Copying a 1 GB+ repo wastes minutes and disk space; tools only read.
         #
         # Windows-path translation for Docker: if running on Linux and source_ref
-        # looks like a Windows path (e.g. C:\Software\CyberOps), remap it to the
+        # looks like a Windows path (e.g. C:\Software\ExampleProject), remap it to the
         # container bind-mount at /software/<rest>. docker-compose.yml mounts
         # C:/Software → /software:ro for exactly this purpose.
         resolved_ref = source_ref
