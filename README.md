@@ -223,7 +223,6 @@ backend/
 └── tests/
 docs/
 scripts/
-eval/                 # scorecards and evaluation metadata
 trident-scan.yml      # CI SARIF example
 ```
 
