@@ -20,7 +20,8 @@ from trident.reachability.reach import ReachContext, Reachability
 # the full module (which would create a circular dependency if triage ever
 # imports this module at load time).
 _VECTOR_RANK: dict[str, int] = {
-    "remote_unauth": 4, "remote_auth": 3, "adjacent": 2, "local": 1, "physical": 0,
+    "remote_unauth": 4, "remote_auth": 3, "adjacent": 2, "local": 1,
+    "physical": 0, "unknown": 0,
 }
 
 

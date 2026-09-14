@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+
+from trident.calibration.paths import model_path as shared_model_path
 
 _TIER_MAP = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4}
 _TIER_REVERSE = {v: k for k, v in _TIER_MAP.items()}
@@ -23,8 +24,7 @@ _FEATURE_NAMES = (
 
 
 def model_path() -> Path:
-    data_dir = Path(os.environ.get("CALIBRATION_DATA_DIR", "/data/calibration"))
-    return data_dir / "model.joblib"
+    return shared_model_path()
 
 
 @lru_cache(maxsize=1)

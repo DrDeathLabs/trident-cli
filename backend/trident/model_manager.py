@@ -6,30 +6,24 @@ can display live rich progress without duplicating the core logic.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Callable
 
-import platformdirs
+from pathlib import Path
+
+from trident.calibration.paths import corpus_db_path as shared_corpus_db_path
+from trident.calibration.paths import data_dir, model_path as shared_model_path
 
 
 def _data_dir() -> Path:
-    from trident import config_manager
-    val, _ = config_manager.get("model.data_dir")
-    if val:
-        return Path(val)
-    import os
-    env = os.environ.get("CALIBRATION_DATA_DIR")
-    if env:
-        return Path(env)
-    return Path(platformdirs.user_data_dir("Trident")) / "calibration"
+    return data_dir()
 
 
 def model_path() -> Path:
-    return _data_dir() / "model.joblib"
+    return shared_model_path()
 
 
 def corpus_db_path() -> Path:
-    return _data_dir() / "corpus.db"
+    return shared_corpus_db_path()
 
 
 def _get_conn():

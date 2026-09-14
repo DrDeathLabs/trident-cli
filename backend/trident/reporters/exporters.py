@@ -1,18 +1,31 @@
-"""Reporters — SARIF, JSON, HTML, PDF export of job findings.
+"""Reporters - SARIF, JSON, HTML, PDF export of job findings.
 
-Only *confirmed* findings are exported by default: refuted false positives and
-unreviewed raw findings must not land in a downstream Security tab.
+Only *confirmed* findings are exported in the actionable list by default.
+For imported reports, confirmed means retained for remediation work. Rejected,
+duplicate, related, suppressed, and unreviewed records remain in disposition
+and evidence sections rather than being discarded.
 """
 
 from __future__ import annotations
 
+import hashlib
 from html import escape
+from collections import Counter
 
 from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from trident import __version__
 from trident.clock import utcnow
+from trident.evidence import (
+    build_evidence_payload,
+    disposition_for_status,
+    evidence_basis,
+    evidence_summary,
+    imported_format,
+    imported_metadata,
+    raw_evidence,
+)
 from trident.models import AttackChain, Finding, Job, TriageOverride
 from trident.triage import PLAYBOOK, TIERS
 
@@ -62,6 +75,183 @@ def _reportable(db: Session, job_id: str) -> list[Finding]:
     ).all()
 
 
+def _job_workspace(job: Job | None) -> str:
+    """Return the workspace used for evidence classification in a report."""
+    if not job:
+        return ""
+    if job.workspace_path:
+        return job.workspace_path
+    return str((job.profile or {}).get("source_context") or "")
+
+
+def _import_metadata(job: Job | None) -> dict | None:
+    if not job or not (job.profile or {}).get("import_mode"):
+        return None
+    profile = job.profile or {}
+    return {
+        "mode": "import",
+        "inputs": profile.get("import_inputs", []),
+        "source_context": profile.get("source_context"),
+        "discover_novel": bool(profile.get("discover_novel")),
+    }
+
+
+def _review_payload(f: Finding) -> dict:
+    """Expose decision provenance without exposing private model thinking."""
+    return {
+        "verdicts": [
+            {
+                "expert": v.expert,
+                "persona": v.persona,
+                "verdict": v.verdict,
+                "confidence": v.confidence,
+                "rationale": v.rationale,
+                "model": v.model,
+                "iteration": v.iteration,
+            }
+            for v in f.verdicts
+        ],
+        "debate": [
+            {
+                "speaker": message.speaker,
+                "role": message.role,
+                "content": message.content,
+                "confidence": message.confidence,
+            }
+            for message in f.debate
+        ],
+    }
+
+
+def _action_key(f: Finding) -> tuple[str, str]:
+    raw = raw_evidence(f)
+    if f.tool == "dependency-check" and raw.get("package"):
+        return (
+            "dependency",
+            f"{str(raw.get('package')).strip().lower()}|"
+            f"{str(raw.get('InstalledVersion') or 'unknown-version').strip().lower()}",
+        )
+    # Code/config findings have no package/version remediation target. Keep one
+    # action per canonical finding rather than merging unrelated occurrences.
+    return ("finding", f.id)
+
+
+def _action_id(f: Finding) -> str:
+    return "action-" + hashlib.sha256("|".join(_action_key(f)).encode()).hexdigest()[:16]
+
+
+def _remediation_actions(
+    db: Session, job_id: str, findings: list[Finding] | None = None,
+) -> list[dict]:
+    """Roll up retained findings into stable package/version work items.
+
+    The flat finding list remains the compatibility surface. This additional
+    layer gives dependency consumers one action per package/version while
+    retaining every canonical, related, and duplicate record as an occurrence.
+    """
+    if findings is None:
+        findings = _reportable(db, job_id)
+    job = db.get(Job, job_id)
+    workspace = _job_workspace(job)
+    all_rows = db.query(Finding).filter(Finding.job_id == job_id).all()
+    by_canonical: dict[str, list[Finding]] = {}
+    for row in all_rows:
+        by_canonical.setdefault(row.canonical_id or row.id, []).append(row)
+
+    grouped: dict[tuple[str, str], dict] = {}
+    for finding in findings:
+        key = _action_key(finding)
+        raw_finding = raw_evidence(finding)
+        action = grouped.setdefault(key, {
+            "action_id": _action_id(finding),
+            "kind": key[0],
+            "package": raw_finding.get("package") if key[0] == "dependency" else None,
+            "version": raw_finding.get("InstalledVersion") if key[0] == "dependency" else None,
+            "finding_ids": [], "occurrences": [], "files": [], "rules": [],
+            "priorities": [], "highest_priority": None, "kev_listed": False,
+            "kev_records": [], "evidence_bases": [], "evidence_references": [],
+            "rationale_references": [], "identity_statuses": [],
+            "duplicate_records": 0, "related_records": 0,
+        })
+        members = by_canonical.get(finding.id, [finding])
+        action["finding_ids"].append(finding.id)
+        action["evidence_bases"].append(evidence_basis(finding, workspace))
+        action["evidence_references"].append({
+            "finding_id": finding.id,
+            "basis": evidence_basis(finding, workspace),
+            "record_preserved": bool(raw_finding.get("record")),
+            "import_format": imported_format(finding),
+        })
+        action["rationale_references"].append({
+            "finding_id": finding.id,
+            "review_verdict_count": len(finding.verdicts),
+            "triage_rationale_present": bool((finding.triage or {}).get("rationale")),
+        })
+        for member in members:
+            raw = raw_evidence(member)
+            action["occurrences"].append({
+                "finding_id": member.id,
+                "canonical_id": member.canonical_id,
+                "status": member.status,
+                "file": member.file,
+                "line_start": member.line_start,
+                "line_end": member.line_end,
+                "rule_id": member.rule_id,
+            })
+            if member.file:
+                action["files"].append(member.file)
+            if member.rule_id:
+                action["rules"].append(member.rule_id)
+            if member.status == "duplicate":
+                action["duplicate_records"] += 1
+            elif member.status == "related":
+                action["related_records"] += 1
+            if (raw.get("kev") or {}).get("listed"):
+                action["kev_listed"] = True
+                kev = raw.get("kev") or {}
+                if kev not in action["kev_records"]:
+                    action["kev_records"].append(kev)
+            identity_status = (raw.get("cpe_identity") or {}).get("status")
+            if identity_status:
+                action["identity_statuses"].append(identity_status)
+        if finding.priority:
+            action["priorities"].append(finding.priority)
+
+    priority_rank = {tier: i for i, tier in enumerate(TIERS)}
+    for action in grouped.values():
+        action["finding_ids"] = sorted(set(action["finding_ids"]))
+        action["files"] = sorted(set(action["files"]))
+        action["rules"] = sorted(set(action["rules"]))
+        action["priorities"] = sorted(set(action["priorities"]), key=priority_rank.get)
+        action["highest_priority"] = min(
+            action["priorities"], key=priority_rank.get, default=None,
+        )
+        action["evidence_bases"] = sorted(set(action["evidence_bases"]))
+        action["evidence_basis"] = (
+            action["evidence_bases"][0]
+            if len(action["evidence_bases"]) == 1
+            else "mixed"
+        ) if action["evidence_bases"] else None
+        action["kev_sources"] = sorted({
+            str(item.get("source")) for item in action["kev_records"]
+            if item.get("source")
+        })
+        action["kev_dates"] = sorted({
+            str(item.get("date_added")) for item in action["kev_records"]
+            if item.get("date_added")
+        })
+        action["identity_statuses"] = sorted(set(action["identity_statuses"]))
+        action["identity_status"] = (
+            "conflict" if "conflict" in action["identity_statuses"]
+            else ("match" if "match" in action["identity_statuses"] else "unknown")
+        )
+        action["occurrence_count"] = len(action["occurrences"])
+    return sorted(
+        grouped.values(),
+        key=lambda item: (priority_rank.get(item["highest_priority"], 99), item["action_id"]),
+    )
+
+
 def _triaged_findings(db: Session, job_id: str):
     rows = (
         db.query(Finding)
@@ -80,6 +270,7 @@ def _triage_overview(db: Session, job_id: str, findings: list[Finding] | None = 
     """Return the compact triage summary shared by scan-level exporters."""
     if findings is None:
         findings = _reportable(db, job_id)
+    all_records = db.query(Finding).filter(Finding.job_id == job_id).all()
     by_tier = {t: 0 for t in TIERS}
     for finding in findings:
         if finding.priority in by_tier:
@@ -88,11 +279,39 @@ def _triage_overview(db: Session, job_id: str, findings: list[Finding] | None = 
     false_positives = db.query(Finding).filter(
         Finding.job_id == job_id, Finding.status == "false_positive"
     ).count()
+    out_of_scope = db.query(Finding).filter(
+        Finding.job_id == job_id, Finding.status == "out_of_scope"
+    ).count()
+    duplicate_records = db.query(Finding).filter(
+        Finding.job_id == job_id, Finding.status == "duplicate"
+    ).count()
+    related_records = db.query(Finding).filter(
+        Finding.job_id == job_id, Finding.status == "related"
+    ).count()
+    reviewed_statuses = {
+        "confirmed", "false_positive", "duplicate", "related", "suppressed",
+        "disputed", "out_of_scope", "parse_error",
+    }
+    reviewed_records = sum(
+        1 for finding in all_records if finding.status in reviewed_statuses
+    )
+    priority_assigned = len(findings) - untriaged
+    actions = _remediation_actions(db, job_id, findings)
     return {
         "summary": {
             "total_confirmed": len(findings),
+            "accounted_records": len(all_records),
+            "reviewed_records": reviewed_records,
+            "triage_candidates": len(findings),
             "triaged": len(findings) - untriaged,
+            "priority_assigned": priority_assigned,
+            "retained_for_remediation": len(findings),
             "false_positives": false_positives,
+            "out_of_scope": out_of_scope,
+            "duplicate_records": duplicate_records,
+            "related_records": related_records,
+            "remediation_groups": len(actions),
+            "remediation_occurrences": sum(a["occurrence_count"] for a in actions),
             "by_tier": by_tier,
         },
         "tiers": [
@@ -100,6 +319,41 @@ def _triage_overview(db: Session, job_id: str, findings: list[Finding] | None = 
             for t in TIERS
         ],
         "untriaged": untriaged,
+    }
+
+
+def _disposition_report(db: Session, job_id: str, job: Job | None) -> dict:
+    """Return non-actionable records with their disposition and evidence trail."""
+    workspace = _job_workspace(job)
+    rows = db.query(Finding).filter(
+        Finding.job_id == job_id, Finding.status != "confirmed"
+    ).all()
+    counts = Counter(f.status or "unknown" for f in rows)
+    records = []
+    for f in rows:
+        raw = (f.raw_outputs or {}).get("correlation") or {}
+        records.append({
+            "id": f.id,
+            "status": f.status,
+            "disposition": disposition_for_status(f.status),
+            "tool": f.tool,
+            "rule_id": f.rule_id,
+            "title": f.title,
+            "file": f.file,
+            "line_start": f.line_start,
+            "line_end": f.line_end,
+            "canonical_id": f.canonical_id,
+            "correlation": raw,
+            "review": _review_payload(f),
+            "evidence": build_evidence_payload(f, workspace),
+            "scanner_severity": f.scanner_severity or f.severity,
+            "model_severity": f.model_severity,
+            "import_metadata": imported_metadata(f),
+            "remediation_action_id": _action_id(f),
+        })
+    return {
+        "counts": dict(sorted(counts.items())),
+        "records": records,
     }
 
 
@@ -258,6 +512,8 @@ def _html_shell(title: str, sidebar: str, body: str) -> str:
 # ── Generic (scan-level) exporters ───────────────────────────────────────────
 
 def to_sarif(db: Session, job_id: str) -> dict:
+    job = db.get(Job, job_id)
+    workspace = _job_workspace(job)
     findings = _reportable(db, job_id)
     triage_overview = _triage_overview(db, job_id, findings)
     rules: dict[str, dict] = {}
@@ -277,6 +533,7 @@ def to_sarif(db: Session, job_id: str) -> dict:
     results = []
     for f in findings:
         triage = f.triage or {}
+        correlation = (f.raw_outputs or {}).get("correlation") or {}
         guard_notes = [n for n in (triage.get("corpus_guard"), triage.get("guard"), triage.get("reach_guard")) if n]
         msg_text = f.title or f.rule_id
         if guard_notes:
@@ -294,21 +551,43 @@ def to_sarif(db: Session, job_id: str) -> dict:
             "partialFingerprints": {"primaryLocationLineHash": f.hash},
             "properties": {
                 "priority": f.priority, "tool": f.tool, "severity": f.severity,
+                "scanner_severity": f.scanner_severity or f.severity,
+                "model_severity": f.model_severity,
+                "remediation_action_id": _action_id(f),
+                "import_metadata": imported_metadata(f),
                 "confidence": f.confidence, "cwe": f.cwe, "owasp": f.owasp,
                 "status": f.status, "iteration": f.iteration,
                 "corroborating_tools": f.corroborating_tools or [],
                 "narrative": f.narrative, "remediation": f.remediation,
                 "exploit_scenario": f.exploit_scenario, "attack_paths": f.attack_paths or [],
+                "canonical_id": f.canonical_id,
+                "correlation": correlation,
+                "disposition": disposition_for_status(f.status),
+                "review": _review_payload(f),
+                "evidence": build_evidence_payload(f, workspace),
                 "triage": {
                     "impact": triage.get("impact"),
                     "attack_vector": triage.get("attack_vector"),
                     "exploitability": triage.get("exploitability"),
                     "fix_effort": triage.get("fix_effort"),
                     "rationale": triage.get("rationale"),
-                    "model_impact": triage.get("model_impact"),
-                    "model_attack_vector": triage.get("model_attack_vector"),
+                     "model_impact": triage.get("model_impact"),
+                     "model_attack_vector": triage.get("model_attack_vector"),
+                     "reported_attack_vector": imported_metadata(f).get("reported_attack_vector"),
                     "in_chain": triage.get("in_chain", False),
                     "reachability": triage.get("reachability"),
+                    "contested": triage.get("contested", False),
+                    "guard": triage.get("guard"),
+                    "class_guard": triage.get("guard"),
+                    "corpus_guard": triage.get("corpus_guard"),
+                    "reach_guard": triage.get("reach_guard"),
+                    "import_evidence_conflict": triage.get("import_evidence_conflict"),
+                    "evidence_basis": triage.get("evidence_basis") or evidence_basis(f, workspace),
+                    "chain_basis": triage.get("chain_basis"),
+                    "chain_member_count": triage.get("chain_member_count", 0),
+                    "chain_priority_eligible": triage.get("chain_priority_eligible", False),
+                    "chain_priority_suppressed_reason": triage.get("chain_priority_suppressed_reason"),
+                    "kev_floor": triage.get("kev_floor"),
                 },
             },
         })
@@ -318,33 +597,59 @@ def to_sarif(db: Session, job_id: str) -> dict:
         "runs": [{"tool": {"driver": {
             "name": "Trident", "version": __version__,
             "rules": list(rules.values()),
-        }}, "results": results, "properties": {"triage": triage_overview}}],
+        }}, "results": results, "properties": {
+            "triage": triage_overview,
+            "remediation_actions": _remediation_actions(db, job_id, findings),
+            "import": _import_metadata(job),
+            "dispositions": _disposition_report(db, job_id, job),
+        }}],
     }
 
 
-def _finding_dict(f: Finding) -> dict:
+def _finding_dict(f: Finding, job: Job | None = None) -> dict:
     triage = f.triage or {}
+    correlation = (f.raw_outputs or {}).get("correlation") or {}
+    workspace = _job_workspace(job)
     return {
         "id": f.id, "priority": f.priority, "tool": f.tool, "rule_id": f.rule_id,
         "severity": f.severity, "confidence": f.confidence, "title": f.title,
         "description": f.description, "file": f.file, "line_start": f.line_start,
         "line_end": f.line_end, "cwe": f.cwe, "owasp": f.owasp, "status": f.status,
         "iteration": f.iteration, "corroborating_tools": f.corroborating_tools or [],
+        "canonical_id": f.canonical_id,
+        "correlation": correlation,
         "narrative": f.narrative, "remediation": f.remediation,
         "exploit_scenario": f.exploit_scenario, "attack_paths": f.attack_paths or [],
+        "disposition": disposition_for_status(f.status),
+        "review": _review_payload(f),
+        "evidence": build_evidence_payload(f, workspace),
+        "scanner_severity": f.scanner_severity or f.severity,
+        "model_severity": f.model_severity,
+        "import_metadata": imported_metadata(f),
+        "remediation_action_id": _action_id(f),
         "triage": {
             "impact": triage.get("impact"),
             "attack_vector": triage.get("attack_vector"),
             "exploitability": triage.get("exploitability"),
             "fix_effort": triage.get("fix_effort"),
             "rationale": triage.get("rationale"),
-            "model_impact": triage.get("model_impact"),
-            "model_attack_vector": triage.get("model_attack_vector"),
+             "model_impact": triage.get("model_impact"),
+             "model_attack_vector": triage.get("model_attack_vector"),
+             "reported_attack_vector": imported_metadata(f).get("reported_attack_vector"),
             "in_chain": triage.get("in_chain", False),
             "reachability": triage.get("reachability"),
-            "corpus_guard": triage.get("corpus_guard"),
+            "contested": triage.get("contested", False),
+            "guard": triage.get("guard"),
             "class_guard": triage.get("guard"),
+            "corpus_guard": triage.get("corpus_guard"),
             "reach_guard": triage.get("reach_guard"),
+            "import_evidence_conflict": triage.get("import_evidence_conflict"),
+            "evidence_basis": triage.get("evidence_basis") or evidence_basis(f, workspace),
+            "chain_basis": triage.get("chain_basis"),
+            "chain_member_count": triage.get("chain_member_count", 0),
+            "chain_priority_eligible": triage.get("chain_priority_eligible", False),
+            "chain_priority_suppressed_reason": triage.get("chain_priority_suppressed_reason"),
+            "kev_floor": triage.get("kev_floor"),
         },
     }
 
@@ -366,7 +671,9 @@ def to_json(db: Session, job_id: str) -> dict:
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         },
-        "findings": [_finding_dict(f) for f in findings],
+        "import": _import_metadata(job),
+        "findings": [_finding_dict(f, job) for f in findings],
+        "remediation_actions": _remediation_actions(db, job_id, findings),
         "attack_chains": [
             {
                 "id": c.id, "goal": c.goal, "steps": c.steps or [],
@@ -376,6 +683,7 @@ def to_json(db: Session, job_id: str) -> dict:
             for c in chains
         ],
         "triage": triage_overview,
+        "dispositions": _disposition_report(db, job_id, job),
     }
 
 
@@ -580,9 +888,11 @@ def to_html(db: Session, job_id: str) -> str:
 
 # ── Triage-specific exporters ─────────────────────────────────────────────────
 
-def _triage_finding_dict(f: Finding, override: TriageOverride | None) -> dict:
+def _triage_finding_dict(
+    f: Finding, override: TriageOverride | None, job: Job | None = None,
+) -> dict:
     triage = f.triage or {}
-    d = _finding_dict(f)
+    d = _finding_dict(f, job)
     d["triage"].update({
         "fix_effort": triage.get("fix_effort"),
         "rationale": triage.get("rationale"),
@@ -600,13 +910,11 @@ def _triage_finding_dict(f: Finding, override: TriageOverride | None) -> dict:
 def to_triage_json(db: Session, job_id: str) -> dict:
     job = db.get(Job, job_id)
     findings, overrides = _triaged_findings(db, job_id)
-    false_positives = db.query(Finding).filter(
-        Finding.job_id == job_id, Finding.status == "false_positive"
-    ).count()
+    overview = _triage_overview(db, job_id, findings)
     by_tier: dict[str, list] = {t: [] for t in TIERS}
     untriaged = []
     for f in findings:
-        fd = _triage_finding_dict(f, overrides.get(f.id))
+        fd = _triage_finding_dict(f, overrides.get(f.id), job)
         if f.priority in by_tier:
             by_tier[f.priority].append(fd)
         else:
@@ -624,20 +932,19 @@ def to_triage_json(db: Session, job_id: str) -> dict:
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         },
-        "summary": {
-            "total_confirmed": len(findings),
-            "triaged": len(findings) - len(untriaged),
-            "false_positives": false_positives,
-            "by_tier": {t: len(by_tier[t]) for t in TIERS},
-        },
+        "import": _import_metadata(job),
+        "summary": overview["summary"],
+        "remediation_actions": _remediation_actions(db, job_id, findings),
         "tiers": tiers_out,
         "untriaged": untriaged,
+        "dispositions": _disposition_report(db, job_id, job),
     }
 
 
 def to_triage_table(db: Session, job_id: str) -> str:
     """Render the worked triage queue for terminal use."""
     job = db.get(Job, job_id)
+    workspace = _job_workspace(job)
     findings, overrides = _triaged_findings(db, job_id)
     by_tier: dict[str, list[tuple[Finding, TriageOverride | None]]] = {
         t: [] for t in TIERS
@@ -654,13 +961,50 @@ def to_triage_table(db: Session, job_id: str) -> str:
         Finding.job_id == job_id, Finding.status == "false_positive"
     ).count()
     target = job.target_name if job else job_id
+    dispositions = _disposition_report(db, job_id, job)
+    disposition_text = ", ".join(
+        f"{status}={count}" for status, count in dispositions["counts"].items()
+    ) or "none"
     lines = [
         f"Trident Triage - {target}",
         "=" * 78,
         f"Confirmed: {len(findings)} | False positives: {false_positives} | "
         f"Untriaged: {len(untriaged)}",
+        f"Non-actionable dispositions: {disposition_text}",
+        "Original report records are retained in JSON/SARIF/sidecar evidence fields.",
         "",
     ]
+    actions = _remediation_actions(db, job_id, findings)
+    lines.append(f"Remediation actions: {len(actions)}")
+    for action in actions:
+        label = " ".join(filter(None, [action.get("package"), action.get("version")]))
+        label = label or action["action_id"]
+        kev_detail = "no"
+        if action.get("kev_listed"):
+            kev_detail = "yes"
+            if action.get("kev_sources"):
+                kev_detail += f" source={','.join(action['kev_sources'])}"
+            if action.get("kev_dates"):
+                kev_detail += f" added={','.join(action['kev_dates'])}"
+        lines.append(
+            f"  {action['action_id']} | {action.get('highest_priority') or 'untriaged'} | "
+            f"{label} | occurrences={action['occurrence_count']} | "
+            f"KEV={kev_detail} | identity={action['identity_status']} | "
+            f"evidence={action.get('evidence_basis') or 'unknown'}"
+        )
+    lines.append("")
+    import_info = _import_metadata(job)
+    if import_info:
+        for item in import_info["inputs"]:
+            lines.append(
+                f"Input: {item.get('path')} | format={item.get('format')} | "
+                f"sha256={item.get('sha256')} | records={item.get('records')}"
+            )
+        lines.append(
+            f"Source context: {import_info.get('source_context') or 'none'} | "
+            f"novel discovery={'enabled' if import_info.get('discover_novel') else 'disabled'}"
+        )
+        lines.append("")
 
     for tier in TIERS:
         items = by_tier[tier]
@@ -681,16 +1025,24 @@ def to_triage_table(db: Session, job_id: str) -> str:
                 if triage.get("exploitability") else None,
                 f"fix={_fl(triage.get('fix_effort'))}"
                 if triage.get("fix_effort") else None,
-                f"reachability={_fl(triage.get('reachability'))}"
-                if triage.get("reachability") else None,
-                "attack-chain" if triage.get("in_chain") else None,
+                 f"reachability={_fl(triage.get('reachability'))}"
+                 if triage.get("reachability") else None,
+                 f"scanner-severity={finding.scanner_severity or finding.severity}"
+                 if finding.scanner_severity or finding.severity else None,
+                 f"model-severity={finding.model_severity}" if finding.model_severity else None,
+                 "attack-chain" if triage.get("in_chain") else None,
+                f"chain-basis={triage.get('chain_basis')}" if triage.get("chain_basis") else None,
             ]))
             title = finding.title or finding.rule_id or "untitled finding"
-            lines.append(f"  - {finding.severity or 'unknown'} | {location} | {title}")
+            lines.append(
+                f"  - {finding.severity or 'unknown'} | {location} | {title} | "
+                f"action={_action_id(finding)}"
+            )
             if factors:
                 lines.append(f"    {factors}")
             if finding.cwe:
                 lines.append(f"    {finding.cwe} | source={finding.tool or '?'}")
+            lines.append(f"    evidence: {evidence_summary(finding, workspace)}")
             if triage.get("rationale"):
                 lines.append(f"    rationale: {triage['rationale']}")
             if override and override.original_priority != override.override_priority:
@@ -713,6 +1065,8 @@ def to_triage_table(db: Session, job_id: str) -> str:
 
 
 def to_triage_sarif(db: Session, job_id: str) -> dict:
+    job = db.get(Job, job_id)
+    workspace = _job_workspace(job)
     findings, overrides = _triaged_findings(db, job_id)
     triage_overview = _triage_overview(db, job_id, findings)
     rules: dict[str, dict] = {}
@@ -760,19 +1114,42 @@ def to_triage_sarif(db: Session, job_id: str) -> dict:
             "partialFingerprints": {"primaryLocationLineHash": f.hash},
             "properties": {
                 "priority": f.priority, "tool": f.tool, "severity": f.severity,
+                "scanner_severity": f.scanner_severity or f.severity,
+                "model_severity": f.model_severity,
+                "remediation_action_id": _action_id(f),
+                "import_metadata": imported_metadata(f),
                 "confidence": f.confidence, "cwe": f.cwe, "owasp": f.owasp,
                 "status": f.status, "iteration": f.iteration,
                 "corroborating_tools": f.corroborating_tools or [],
                 "narrative": f.narrative, "remediation": f.remediation,
                 "exploit_scenario": f.exploit_scenario, "attack_paths": f.attack_paths or [],
+                "canonical_id": f.canonical_id,
+                "correlation": (f.raw_outputs or {}).get("correlation") or {},
+                "disposition": disposition_for_status(f.status),
+                "review": _review_payload(f),
+                "evidence": build_evidence_payload(f, workspace),
                 "triage": {
                     "impact": triage.get("impact"),
                     "attack_vector": triage.get("attack_vector"),
                     "exploitability": triage.get("exploitability"),
                     "fix_effort": triage.get("fix_effort"),
                     "rationale": triage.get("rationale"),
+                    "model_impact": triage.get("model_impact"),
+                    "model_attack_vector": triage.get("model_attack_vector"),
                     "in_chain": triage.get("in_chain", False),
                     "reachability": triage.get("reachability"),
+                    "contested": triage.get("contested", False),
+                    "guard": triage.get("guard"),
+                    "class_guard": triage.get("guard"),
+                    "corpus_guard": triage.get("corpus_guard"),
+                    "reach_guard": triage.get("reach_guard"),
+                    "import_evidence_conflict": triage.get("import_evidence_conflict"),
+                    "evidence_basis": triage.get("evidence_basis") or evidence_basis(f, workspace),
+                    "chain_basis": triage.get("chain_basis"),
+                    "chain_member_count": triage.get("chain_member_count", 0),
+                    "chain_priority_eligible": triage.get("chain_priority_eligible", False),
+                    "chain_priority_suppressed_reason": triage.get("chain_priority_suppressed_reason"),
+                    "kev_floor": triage.get("kev_floor"),
                 },
                 "human_override": {
                     "original_priority": override.original_priority,
@@ -787,7 +1164,12 @@ def to_triage_sarif(db: Session, job_id: str) -> dict:
         "runs": [{"tool": {"driver": {
             "name": "Trident (triage)", "version": __version__,
             "rules": list(rules.values()),
-        }}, "results": results, "properties": {"triage": triage_overview}}],
+        }}, "results": results, "properties": {
+            "triage": triage_overview,
+            "remediation_actions": _remediation_actions(db, job_id, findings),
+            "import": _import_metadata(job),
+            "dispositions": _disposition_report(db, job_id, job),
+        }}],
     }
 
 

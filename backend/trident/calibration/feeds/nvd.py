@@ -13,7 +13,10 @@ from trident.calibration.corpus.db import get_db, init_schema, set_feed_status, 
 from trident.calibration.feeds.base import BaseFetcher
 
 _NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-_PAGE_SIZE = 2000
+# Keep pages below the response size that commonly triggers gateway resets
+# during unauthenticated full pulls.  The checkpoint remains a start index, so
+# changing this value is safe when resuming an interrupted download.
+_PAGE_SIZE = 1000
 _CHECKPOINT_KEY = "nvd_full_checkpoint"   # stores next startIndex to fetch
 _PROGRESS_KEY = "nvd_fetch_progress"      # "fetched/total" string for UI
 
@@ -79,10 +82,36 @@ def _upsert_cves(conn, rows: list[dict]) -> None:
 
 def _fetch_page(client: httpx.Client, params: dict) -> dict:
     for attempt in range(6):
-        resp = client.get(_NVD_URL, params=params, headers=_headers(), timeout=60)
+        try:
+            # Large NVD pages can take more than a minute to stream without an
+            # API key. Keep connect/pool failures bounded, but allow the body
+            # enough time to arrive before treating a healthy 200 response as
+            # a failed page.
+            resp = client.get(
+                _NVD_URL,
+                params=params,
+                headers=_headers(),
+                timeout=httpx.Timeout(connect=30, read=180, write=30, pool=30),
+            )
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            wait = min(30 * (attempt + 1), 180)
+            logger.warning(
+                f"NVD transient transport failure ({type(exc).__name__}) — "
+                f"retrying in {wait}s (attempt {attempt + 1}/6)"
+            )
+            time.sleep(wait)
+            continue
         if resp.status_code == 429:
             wait = max(int(resp.headers.get("Retry-After", 30)), 30) * (attempt + 1)
             logger.warning(f"NVD 429 — backing off {wait}s (attempt {attempt + 1}/6)")
+            time.sleep(wait)
+            continue
+        if 500 <= resp.status_code < 600:
+            wait = min(30 * (attempt + 1), 180)
+            logger.warning(
+                f"NVD {resp.status_code} — retrying in {wait}s "
+                f"(attempt {attempt + 1}/6)"
+            )
             time.sleep(wait)
             continue
         resp.raise_for_status()

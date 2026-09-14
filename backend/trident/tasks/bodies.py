@@ -37,6 +37,8 @@ def ingest_job_body(job_id: str, source_type: str, source_ref: str, target_name:
             job.workspace_path = ws
             job.languages = languages
             job.commit_hash = commit_hash
+            if profile:
+                job.profile = {**(job.profile or {}), **profile}
             db.commit()
             return True
         except Exception as e:

@@ -58,6 +58,7 @@ def run_scan(job: Job, db: Session) -> None:
     budget = LLMBudget(limit=call_cap)
     agentic = bool(profile.get("agentic", settings.agent.enabled))
     model_override = profile.get("model") or None
+    import_mode = bool(profile.get("import_mode"))
 
     job.status = JobStatus.scanning.value
     job.started_at = job.started_at or utcnow()
@@ -67,15 +68,64 @@ def run_scan(job: Job, db: Session) -> None:
     _import_plugins()
 
     try:
-        # ---- iteration 0: deterministic tools ----
-        # Tools run sequentially: they share a single (non-thread-safe) session and
-        # each spawns subprocesses for the real work.
-        publish_event(db, job_id, EventType.SCAN_TOOLS_START, {"tools": tool_names})
-        for t in get_tools(tool_names, workspace, job_id):
-            try:
-                t.run(db)
-            except Exception as e:
-                logger.exception(f"Tool error: {e}")
+        # ---- iteration 0: deterministic tools or imported reports ----
+        if import_mode:
+            from trident.ingest.importers import parse_report, persist_imported_findings
+            input_items = profile.get("import_inputs", [])
+            if not input_items:
+                raise ValueError("import job has no input reports")
+            reports = []
+            for item in input_items:
+                report = parse_report(
+                    item["path"], input_format=item.get("format", "auto"),
+                    source_dir=profile.get("source_context"),
+                )
+                expected_hash = item.get("sha256")
+                if expected_hash and report.sha256 != expected_hash:
+                    raise ValueError(
+                        f"input report changed after validation: {report.path}"
+                    )
+                reports.append(report)
+            publish_event(db, job_id, EventType.SCAN_IMPORT_START, {
+                "files": [r.path for r in reports],
+                "formats": [r.format for r in reports],
+            })
+            imported_count = persist_imported_findings(db, job_id, reports)
+            publish_event(db, job_id, EventType.SCAN_IMPORT_COMPLETE, {"findings": imported_count})
+        else:
+            # Tools run sequentially: they share a single (non-thread-safe)
+            # session and each spawns subprocesses for the real work.
+            corpus_path = profile.get("scanner_corpus")
+            if corpus_path:
+                from trident.validation.replay import load_corpus
+
+                corpus = load_corpus(corpus_path)
+                for record in corpus["records"]:
+                    values = {k: record.get(k) for k in (
+                        "id", "hash", "correlation_key", "tool", "rule_id", "severity",
+                        "scanner_severity", "title", "description", "file", "line_start",
+                        "line_end", "snippet", "cwe", "owasp", "recommendation", "raw_outputs",
+                    )}
+                    values.update(job_id=job_id, status="raw", confidence=0.5,
+                                  remediation=None, narrative=None, exploit_scenario=None,
+                                  attack_paths=[], triage={}, iteration=0)
+                    db.add(Finding(**values))
+                db.flush()
+                publish_event(db, job_id, EventType.SCAN_TOOLS_START, {
+                    "tools": [], "replay_corpus": str(corpus_path),
+                    "scanner_subprocesses": False, "records": len(corpus["records"]),
+                })
+                publish_event(db, job_id, "tool.complete", {
+                    "replay_corpus": str(corpus_path), "records": len(corpus["records"]),
+                    "scanner_subprocesses": False,
+                })
+            else:
+                publish_event(db, job_id, EventType.SCAN_TOOLS_START, {"tools": tool_names})
+                for t in get_tools(tool_names, workspace, job_id):
+                    try:
+                        t.run(db)
+                    except Exception as e:
+                        logger.exception(f"Tool error: {e}")
         db.commit()
 
         # ---- suppression (.tridentignore + inline comments) ----
@@ -118,7 +168,8 @@ def run_scan(job: Job, db: Session) -> None:
             db.commit()
 
             # ---- novel discovery (every iteration, incl. 0) ----
-            if not budget.exhausted:
+            can_discover = not import_mode or bool(profile.get("discover_novel"))
+            if not budget.exhausted and can_discover and workspace:
                 publish_event(db, job_id, EventType.SCAN_DEBATE_START, {"iteration": iteration})
                 novel = collect_novel(db, review_experts, job_id, workspace, iteration,
                                       budget, seen=seen_files)
@@ -153,21 +204,47 @@ def run_scan(job: Job, db: Session) -> None:
                 break
             iteration += 1
 
-        # Fail-open: any finding still disputed after all iterations converged is
-        # promoted to confirmed so it enters the triage queue rather than
-        # disappearing into limbo. The expert vote record documents the
-        # uncertainty; triage + human override make the final priority call.
+        # Fail closed: disagreement or an incomplete model decision remains
+        # unresolved. It must not be promoted into a security verdict merely so
+        # that it appears in the triage queue.
         remaining_disputed = db.query(Finding).filter(
             Finding.job_id == job_id, Finding.status == "disputed"
         ).all()
         for f in remaining_disputed:
-            f.status = "confirmed"
-            # Preserve the disagreement signal so the UI can flag these for review.
-            f.triage = {**f.triage, "contested": True}
+            from trident.ingest.importers import is_imported_sonarqube_code_smell
+
+            if is_imported_sonarqube_code_smell(f):
+                f.status = "out_of_scope"
+                f.review_error = None
+                f.triage = {
+                    **(f.triage or {}),
+                    "scope": "non_security_quality_issue",
+                    "review_verdict": "disputed",
+                    "scope_rationale": (
+                        "SonarQube classified this record as CODE_SMELL. It is "
+                        "retained as a quality finding, but excluded from "
+                        "Trident's security remediation queue."
+                    ),
+                }
+                publish_event(db, job_id, EventType.FINDING_OUT_OF_SCOPE, {
+                    "finding_id": f.id,
+                    "reason": "imported SonarQube CODE_SMELL is a non-security quality issue",
+                    "original_verdict": "disputed",
+                })
+                continue
+            f.status = "unresolved"
+            f.review_error = "model disagreement remained at convergence"
+            f.triage = {**(f.triage or {}), "contested": True,
+                        "unresolved": True, "unresolved_reason": f.review_error}
+            publish_event(db, job_id, EventType.FINDING_UNRESOLVED, {
+                "finding_id": f.id,
+                "priority_pending": True,
+                "reason": f.review_error,
+            })
         if remaining_disputed:
             logger.info(
-                f"fail-open: promoted {len(remaining_disputed)} disputed findings "
-                f"to confirmed for job {job_id}"
+                f"fail-closed: retained {len(remaining_disputed)} unresolved "
+                f"disputed findings for job {job_id}"
             )
             db.commit()
 

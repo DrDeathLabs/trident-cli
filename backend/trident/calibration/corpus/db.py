@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from trident.calibration.paths import corpus_db_path, data_dir
+
 
 def _data_dir() -> Path:
-    return Path(os.environ.get("CALIBRATION_DATA_DIR", "/data/calibration"))
+    return data_dir()
 
 
 def get_db() -> sqlite3.Connection:
     """Return a WAL-mode sqlite3 connection, creating the file if needed."""
     data_dir = _data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(data_dir / "corpus.db")
+    conn = sqlite3.connect(corpus_db_path())
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn

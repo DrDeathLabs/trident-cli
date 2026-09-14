@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from trident.config import settings
+from trident.evidence import prompt_evidence
 from trident.experts.base import ExpertBase
 from trident.llm.base import ChatMessage
 from trident.models import Finding
@@ -26,15 +27,17 @@ class RedTeamExpert(ExpertBase):
     def _model_for_role(self) -> str:
         return settings.llm.model_for("redteam")
 
-    def invoke_chains(self, confirmed_findings: list[Finding]) -> StructuredResult[AttackPathList]:
+    def invoke_chains(self, confirmed_findings: list[Finding], iteration: int = 0) -> StructuredResult[AttackPathList]:
         """Build attack paths from confirmed findings. No DB access."""
         block = "\n".join(
             f"- [{f.id}] {f.title} ({f.severity}, {f.cwe or '-'}) @ {f.file}:{f.line_start}\n"
-            f"  {f.description[:200]}"
+            f"  {f.description[:200]}\n  {prompt_evidence(f, self.workspace)}"
             for f in confirmed_findings[:40]
         )
-        prompt = build_redteam_prompt(block)
+        prompt = build_redteam_prompt(block, metadata_only=not bool(self.workspace))
         return chat_structured(
             [ChatMessage("system", self.system_prompt), ChatMessage("user", prompt)],
             AttackPathList, model=self.model, temperature=0.3,
+            context={"run_id": self.job_id, "task_type": "redteam",
+                     "council_role": self.name, "iteration": iteration},
         )
