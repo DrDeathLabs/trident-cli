@@ -17,6 +17,9 @@ venv/
 .acceptance/
 acceptance/
 validation/
+release-audit/
+*_RELEASE_HANDOFF.md
+*_release_handoff.md
 benchmark/
 benchmarks/
 evidence/
