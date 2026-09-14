@@ -1,11 +1,11 @@
 # Triage - From Alert Flood to Worked Queue
 
-Trident runs automatic triage after council confirmation. This is the step that
-turns a confirmed finding into an operational decision: not just whether it is
+Trident runs automatic triage after council review. This is the step that turns
+a retained finding into an operational decision: not just whether it is
 severe in the abstract, but how urgently this specific issue should be worked in
 this codebase.
 
-The LLM assesses explicit factors-impact, attack vector, exploitability, fix
+The LLM assesses explicit factors: impact, attack vector, exploitability, fix
 effort, and reachability context. Deterministic code then applies the triage
 rubric, evidence-based correction adjustments, and attack-chain context to
 compute one of five operational priority tiers, P0-P4. The model is not asked
@@ -13,11 +13,18 @@ to emit an opaque P0-P4 label directly.
 
 Scanner output is intentionally a candidate set: scanner false positives are
 expected and are useful recall evidence. Council verdicts and triage remove
-rejected candidates from the final actionable queue; false-positive counts and
-their evidence remain available in JSON/SARIF properties and the full triage
-sidecar. A triage decision is not a substitute for authorized human review.
-The adjustments described here are triage mechanisms, not runtime safety
-controls, execution blockers, or security approval gates.
+rejected candidates from the final actionable queue; false-positive and
+out-of-scope quality-finding counts and their evidence remain available in
+JSON/SARIF properties and the full triage sidecar. A `confirmed` status is the
+workflow's retained-for-remediation state. It is not a universal claim that
+the scanner record is factually or source-level proven. Imported SonarQube
+`CODE_SMELL` records are classified as `out_of_scope`, not as false positives:
+the original Sonar finding may be valid, but it is not a security remediation
+item. For report-only imports, the queue is based on imported scanner evidence
+and reachability is `unknown`. A triage decision is not a substitute for
+authorized human review.
+The adjustments described here are triage correction mechanisms. They are not
+runtime safety controls, execution blockers, or security approval gates.
 
 ---
 
@@ -25,8 +32,8 @@ controls, execution blockers, or security approval gates.
 
 | Tier | Severity | Meaning | SLA |
 |------|----------|---------|-----|
-| P0 | Critical | Remotely exploitable without authentication, trivially exploitable, catastrophic impact (RCE or auth bypass) | Immediate - out-of-band fix |
-| P1 | High | High-impact, remotely reachable | Fix this sprint (~7 days) |
+| P0 | Critical | Incident-level urgency. Requires source-grounded exposure or qualifying multi-finding chain evidence. | Immediate - out-of-band fix |
+| P1 | High | High-impact and remotely reachable, or exact identity-matched KEV evidence supports the floor | Fix this sprint (~7 days) |
 | P2 | Medium | High-impact with limited reach, or medium-impact with remote reach | Scheduled remediation (~30 days) |
 | P3 | Low | Moderate impact | Backlog / batch this quarter |
 | P4 | Info | Informational / hygiene | Opportunistic |
@@ -60,6 +67,7 @@ Tiers are computed from three dimensions. The combination of all three determine
 | `adjacent` | 2 | Exploitable from an adjacent network segment |
 | `local` | 1 | Requires local system access or source code access |
 | `physical` | 0 | Requires physical access |
+| `unknown` | 0 | The available report evidence does not establish exposure |
 
 ### Exploitability ranks
 
@@ -81,36 +89,53 @@ Tiers are computed from three dimensions. The combination of all three determine
 
 ### Chain bump
 
-If a finding participates in an attack chain (`triage.in_chain = true`) and is not already P0, it is bumped up one tier (P2 → P1, P3 → P2, etc.).
+If a finding participates in an attack chain (`triage.in_chain = true`) and is
+not already P0, it normally is bumped up one tier. A report-derived chain may
+not create P0 or P1 unless it contains multiple distinct confirmed findings or
+source-grounded reachable evidence. Trident keeps the path and records the
+suppression reason when that condition is not met. A single imported record
+cannot become P0 because of a red-team hypothesis.
+
+### Report-only triage rules
+
+Imported reports can support useful prioritization without pretending that
+source inspection occurred:
+
+- `reachability` remains `unknown` without a matching source file.
+- The final `attack_vector` remains `unknown` when exposure is not established.
+- The model's proposed vector is retained in `model_attack_vector`.
+- A CVSS vector from the imported record is retained as `reported_attack_vector`.
+- Exact package/CPE identity and direct KEV membership can support a P1 floor.
+- KEV evidence does not create P0 and does not override an identity conflict.
+- Corpus prevalence may adjust impact, but cannot manufacture network exposure.
+
+The deterministic package/CPE check returns `match`, `conflict`, or `unknown`.
+Conflicts remain in the Council review and audit trail. They are not silently
+discarded.
+
+## Evidence basis
+
+Every retained finding exposes an `evidence` object. Its `basis` is one of:
+
+| Basis | Meaning |
+|-------|---------|
+| `report_only` | Imported scanner metadata was available, but no matching source file was available |
+| `source_grounded` | An imported record was mapped to source context and the reported file was available |
+| `scanner_and_source` | A native Trident scan had scanner output and a source workspace |
+| `scanner_only` | Scanner output was available without a source workspace |
+
+The original imported record is under `evidence.import.record`. Council and
+judge conclusions are under `review.verdicts` and `review.debate`. This lets a
+reviewer distinguish scanner evidence, model judgment, source evidence,
+reachability, deterministic adjustments, and chain reasoning.
 
 ---
 
-## Evaluation snapshot: from alert barbell to worked queue
+## Validation scope
 
-The following is a Trident evaluation snapshot from one 215-finding OWASP
-PyGoat job. It isolates the class-correction experiment: a stronger model was
-tested first, then the deterministic correction was applied. It is evidence of
-the targeted failure-mode correction and its effect on queue shape-not an
-independent benchmark, universal guarantee, or claim that every target will
-produce this distribution.
-
-| Configuration | P0 | P1 | P2 | P3 | P4 |
-|---|---:|---:|---:|---:|---:|
-| Gemma baseline | 47 | 79 | 35 | 2 | 52 |
-| Nemotron model swap | 34 | 77 | 27 | 14 | 63 |
-| Nemotron + deterministic correction | **13** | 52 | 53 | 43 | 54 |
-
-On the same evaluation, 10 of 13 planted PyGoat vulnerabilities were detected.
-Among those 10 detected findings, 8/10 matched the expert-assigned tier exactly,
-10/10 landed within one tier, over-escalation was 0, and two findings were
-under-escalated by one tier. The ground truth was expert code review rather than
-an independently blinded benchmark, so these figures describe consistency with
-that review and should be read with that limitation.
-
-The important result is the decision shape: the baseline concentrated alerts at
-the extremes, while the triage workflow produced a graded queue in which P0
-remained available for genuinely urgent findings and lower tiers carried the
-work that should be scheduled rather than escalated indiscriminately.
+The approved public validation summary, including repeatability and import
+accounting, is maintained in [VALIDATION.md](VALIDATION.md). It is evidence
+within the stated test scope, not a universal performance or correctness claim.
 
 ---
 
@@ -128,10 +153,22 @@ The `triage` object is nested under each finding in JSON output and in the SARIF
 | `in_chain` | bool | Whether this finding is part of a red team attack chain |
 | `model_impact` | string | Raw LLM assessment before guard adjustments |
 | `model_attack_vector` | string | Raw LLM assessment before guard adjustments |
+| `reported_attack_vector` | string or null | Attack vector stated by the imported CVSS record, when present |
+| `scanner_severity` | string | Original normalized scanner severity |
+| `model_severity` | string or null | Severity proposed by an expert or judge; it does not overwrite scanner severity |
 | `guard` | string or null | Class guard note if it applied |
 | `reach_guard` | string or null | Reachability guard note if it applied |
 | `reachability` | string | `reachable`, `unreachable`, or `unknown` |
 | `corpus_guard` | string or null | Corpus guard note if it applied |
+| `chain_member_count` | integer | Distinct confirmed findings in the associated chain |
+| `chain_priority_eligible` | bool | Whether chain evidence was allowed to affect P0/P1 |
+| `chain_priority_suppressed_reason` | string or null | Reason a report-derived high-tier chain bump was blocked |
+| `kev_floor` | string or null | Deterministic KEV priority-floor explanation |
+
+Each finding also exposes `import_metadata` with the report format, package and
+version when applicable, KEV status, CPE identity status, and raw version
+normalization details. `evidence.import.record` remains the complete original
+record.
 
 `model_impact` and `model_attack_vector` show the raw LLM assessment before any guard ran. If these differ from `impact` and `attack_vector`, a guard adjusted the rating. The relevant guard field (`guard`, `reach_guard`, or `corpus_guard`) will contain an explanation.
 
@@ -173,7 +210,7 @@ guard confirmed it is `reachable` from a detected external entry point.
 
 | Tier | Recommended action |
 |------|--------------------|
-| P0 | Stop and fix immediately. These are actively exploitable. Open an incident if the affected code is in production. |
+| P0 | Verify immediately and fix immediately when the source and deployment confirm the result. Open an incident if the affected code is in production. |
 | P1 | Fix before the next production release. Add to the current sprint. |
 | P2 | Schedule for the next release cycle. Do not defer more than 30 days. |
 | P3 | Add to the backlog. Address in batch with similar findings. |

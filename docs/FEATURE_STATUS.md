@@ -43,6 +43,15 @@ This table describes the current standalone CLI capabilities.
 | Automatic triage sidecar | Supported | Full JSON, SARIF, or table queue with tier, rationale, and false-positive counts |
 | Quiet mode | Supported | Suitable for CI logs |
 
+## External JSON input
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| SonarQube JSON import | Supported | Use `--input-file`; native scanner subprocesses are bypassed |
+| OWASP Dependency-Check JSON import | Supported | Requires `reportSchema: 1.1` |
+| Multiple supported JSON inputs | Supported | Repeat `--input-file` for one import job |
+| Arbitrary JSON conversion | Unsupported | Unknown schemas are rejected rather than guessed |
+
 ## LLM backends
 
 | Capability | Status | Notes |

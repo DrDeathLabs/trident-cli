@@ -2,13 +2,17 @@
 
 ## Resolution priority
 
-When the same setting appears in more than one place, Trident uses this order:
+For settings resolved by the CLI configuration manager, when the same setting
+appears in more than one place, Trident uses this order:
 
 ```
 CLI flag  >  Environment variable  >  Config file  >  Built-in default
 ```
 
-A value set with `--severity-gate critical` on the command line always wins over a config file setting.
+A value set with `--severity-gate critical` on the command line always wins over
+a config file setting. LLM transport settings are read from their documented
+environment variables at process start; `--backend` and `--model` override
+those values for one scan.
 
 ---
 
@@ -57,14 +61,22 @@ trident config show
 
 ### LLM settings
 
+The schema records these values for inspection and configuration management.
+For a scan, use the environment variables or the per-scan `--backend` and
+`--model` options so the process receives the intended LLM settings.
+
 | Key | Default | Env var | Description |
 |-----|---------|---------|-------------|
 | `llm.backend` | `ollama` | `LLM_BACKEND` | LLM provider. Valid values: `ollama`, `openai`, `anthropic` |
-| `llm.base_url` | `http://localhost:11434` | `OLLAMA_HOST` | Ollama server base URL |
+| `llm.base_url` | `http://127.0.0.1:11434` | `TRIDENT_OLLAMA_HOST` (also `OLLAMA_HOST` in the runtime) | Ollama local gateway base URL |
+| `llm.ollama_mode` | `local_gateway` | `TRIDENT_OLLAMA_MODE` | `local_gateway` or `direct_cloud` |
+| `llm.ollama_cloud_host` | `https://ollama.com` | `TRIDENT_OLLAMA_CLOUD_HOST` | Direct Ollama Cloud API URL |
 | `llm.openai_api_key` | _(empty)_ | `OPENAI_API_KEY` | OpenAI API key. Treated as a secret; not printed in `config show` |
 | `llm.anthropic_api_key` | _(empty)_ | `ANTHROPIC_API_KEY` | Anthropic API key. Treated as a secret; not printed in `config show` |
-| `llm.expert_model` | _(backend default)_ | `EXPERT_MODEL` | Model name for all council roles. Blank means use the backend's default model |
+| `llm.expert_model` | `nemotron-3-super:cloud` | `TRIDENT_OLLAMA_MODEL` (also `EXPERT_MODEL` in the runtime) | Model name for expert reviewers |
 | `llm.judge_model` | _(empty)_ | `JUDGE_MODEL` | Per-role override for the judge. Blank means use `expert_model` |
+| `llm.secondary_model` | `qwen3.5:cloud` | `TRIDENT_OLLAMA_SECONDARY_MODEL` | Secondary comparison model |
+| `llm.max_repair_retries` | `2` | `TRIDENT_LLM_MAX_REPAIR_RETRIES` | Bounded application-level JSON repair attempts |
 
 ### Scan settings
 
@@ -102,11 +114,15 @@ These variables are not in the config file but can be set as environment variabl
 | `LLM_TIMEOUT` | `300` | Seconds before an LLM call times out |
 | `LLM_MAX_RETRIES` | `3` | Number of retry attempts on LLM failure |
 | `LLM_CONCURRENCY` | `4` | Maximum parallel LLM calls during the scan |
+| `TRIDENT_LLM_THINK` | `auto` | Ollama thinking mode; `false` disables thinking |
+| `TRIDENT_LLM_RESPONSE_TIMEOUT` | value of `LLM_TIMEOUT` | Per-response timeout in seconds |
+| `TRIDENT_LLM_REQUEST_DEADLINE` | `LLM_TIMEOUT + 30` | Overall request deadline in seconds |
 | `JUDGE_SEVERITY_FLOOR` | `high` | Always send findings at this severity or above to the judge |
 | `MIN_NEW_FINDINGS` | `2` | Convergence threshold: stop iterating if fewer than this many new confirmed findings |
 | `AGENT_MAX_STEPS` | `6` | Maximum tool-call steps per expert in agentic mode |
 | `TRIDENT_SQLITE_PATH` | _(platform default)_ | Custom SQLite database path |
 | `TRIDENT_WORKSPACES` | _(platform default)_ | Directory where scan workspace files are stored |
+| `TRIDENT_TOOLS_DIR` | _(platform default)_ | Directory for managed scanner binaries |
 | `WORKSPACE_RETENTION_DAYS` | `14` | Days before workspace files are cleaned up |
 
 ---
