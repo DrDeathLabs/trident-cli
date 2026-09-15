@@ -14,6 +14,7 @@ venv/
 .ruff_cache/
 
 # Local release validation data
+.acceptance/
 .release-smoke-data/
 backend/.release-smoke-data/
 backend/.wsl-smoke-data/

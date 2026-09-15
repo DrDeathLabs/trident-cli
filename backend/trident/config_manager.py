@@ -38,9 +38,20 @@ CONFIG_SCHEMA: dict[str, dict] = {
         "env": "LLM_BACKEND",
     },
     "llm.base_url": {
-        "default": "http://localhost:11434",
-        "description": "Ollama base URL",
-        "env": "OLLAMA_HOST",
+        "default": "http://127.0.0.1:11434",
+        "description": "Ollama local gateway URL",
+        "env": "TRIDENT_OLLAMA_HOST",
+    },
+    "llm.ollama_mode": {
+        "default": "local_gateway",
+        "description": "Ollama access mode: local gateway or direct cloud",
+        "valid": ["local_gateway", "direct_cloud"],
+        "env": "TRIDENT_OLLAMA_MODE",
+    },
+    "llm.ollama_cloud_host": {
+        "default": "https://ollama.com",
+        "description": "Ollama direct cloud API URL",
+        "env": "TRIDENT_OLLAMA_CLOUD_HOST",
     },
     "llm.openai_api_key": {
         "default": "",
@@ -55,14 +66,24 @@ CONFIG_SCHEMA: dict[str, dict] = {
         "secret": True,
     },
     "llm.expert_model": {
-        "default": "",
-        "description": "Model for expert reviewers (blank = backend default)",
-        "env": "EXPERT_MODEL",
+        "default": "nemotron-3-super:cloud",
+        "description": "Model for expert reviewers",
+        "env": "TRIDENT_OLLAMA_MODEL",
     },
     "llm.judge_model": {
         "default": "",
         "description": "Model for the judge (blank = same as expert)",
         "env": "JUDGE_MODEL",
+    },
+    "llm.secondary_model": {
+        "default": "qwen3.5:cloud",
+        "description": "Secondary comparison model",
+        "env": "TRIDENT_OLLAMA_SECONDARY_MODEL",
+    },
+    "llm.max_repair_retries": {
+        "default": 2,
+        "description": "Bounded application-level JSON repair attempts",
+        "env": "TRIDENT_LLM_MAX_REPAIR_RETRIES",
     },
     # Scan behaviour
     "scan.max_iterations": {

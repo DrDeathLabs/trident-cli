@@ -29,6 +29,7 @@ class JudgeExpert(ExpertBase):
 
     def invoke_judge(
         self, finding: Finding, prior_verdicts: list[dict] | None = None,
+        iteration: int = 0,
     ) -> StructuredResult[JudgeVerdict]:
         """Adjudicate a finding given the experts' full rationales. No DB access."""
         prior_verdicts = prior_verdicts or []
@@ -42,8 +43,11 @@ class JudgeExpert(ExpertBase):
             verdicts_block = "(no prior expert verdicts — adjudicate the tool finding directly)"
         snippet = self._read_file(finding.file, finding.line_start, finding.line_end) if finding.file else ""
         ext = self._ext_for(finding.file)
-        prompt = build_judge_prompt(finding, verdicts_block, snippet, ext)
+        prompt = build_judge_prompt(finding, verdicts_block, snippet, ext, self.workspace)
         return chat_structured(
             [ChatMessage("system", self.system_prompt), ChatMessage("user", prompt)],
             JudgeVerdict, model=self.model, temperature=0.1,
+            context={"run_id": self.job_id, "finding_id": finding.id,
+                     "task_type": "judge", "council_role": self.name,
+                     "iteration": iteration},
         )

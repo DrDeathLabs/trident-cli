@@ -22,11 +22,14 @@ def _app_data_dir() -> Path:
 
 @dataclass
 class LLMConfig:
-    backend: str = field(default_factory=lambda: _env("LLM_BACKEND", "ollama"))
-    ollama_host: str = field(default_factory=lambda: _env("OLLAMA_HOST", "http://localhost:11434"))
+    backend: str = field(default_factory=lambda: _env("TRIDENT_LLM_BACKEND", _env("LLM_BACKEND", "ollama")))
+    ollama_mode: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_MODE", "local_gateway"))
+    ollama_host: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_HOST", _env("OLLAMA_HOST", "http://127.0.0.1:11434")))
+    ollama_cloud_host: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_CLOUD_HOST", "https://ollama.com"))
     # One default model for every council role (experts, judge, red-team), with
     # optional per-role overrides and a per-job override via the scan profile.
-    default_model: str = field(default_factory=lambda: _env("EXPERT_MODEL", "gemma4:31b-cloud"))
+    default_model: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_MODEL", _env("EXPERT_MODEL", "nemotron-3-super:cloud")))
+    secondary_model: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_SECONDARY_MODEL", "qwen3.5:cloud"))
     judge_model: str = field(default_factory=lambda: _env("JUDGE_MODEL", ""))
     redteam_model: str = field(default_factory=lambda: _env("REDTEAM_MODEL", ""))
     # Triage is a one-time calibration/judgment pass; it can use a stronger or
@@ -34,7 +37,13 @@ class LLMConfig:
     triage_model: str = field(default_factory=lambda: _env("TRIAGE_MODEL", ""))
     embedding_model: str = field(default_factory=lambda: _env("EMBEDDING_MODEL", "qwen3-embedding:0.6b"))
     request_timeout: int = int(_env("LLM_TIMEOUT", "300"))
-    max_retries: int = int(_env("LLM_MAX_RETRIES", "3"))
+    connect_timeout: float = float(_env("TRIDENT_LLM_CONNECT_TIMEOUT", "15"))
+    response_timeout: float = float(_env("TRIDENT_LLM_RESPONSE_TIMEOUT", str(request_timeout)))
+    request_deadline: float = float(_env("TRIDENT_LLM_REQUEST_DEADLINE", str(request_timeout + 30)))
+    max_retries: int = int(_env("LLM_MAX_RETRIES", _env("TRIDENT_LLM_MAX_TRANSIENT_RETRIES", "3")))
+    max_repair_retries: int = int(_env("TRIDENT_LLM_MAX_REPAIR_RETRIES", "2"))
+    temperature: float = float(_env("TRIDENT_LLM_TEMPERATURE", "0"))
+    think: str = field(default_factory=lambda: _env("TRIDENT_LLM_THINK", "auto"))
     # Bounded parallelism for LLM calls (aligns with Ollama's OLLAMA_NUM_PARALLEL).
     concurrency: int = int(_env("LLM_CONCURRENCY", "4"))
 
@@ -44,6 +53,8 @@ class LLMConfig:
             return self.judge_model
         if role == "redteam" and self.redteam_model:
             return self.redteam_model
+        if role == "triage" and self.triage_model:
+            return self.triage_model
         return self.default_model
 
 

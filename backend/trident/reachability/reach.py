@@ -84,9 +84,13 @@ class ReachContext:
         return _bfs(self, func)
 
     def _enclosing_func(self, file: str, line_start: int) -> str | None:
-        full = os.path.realpath(os.path.join(self.workspace, file or ""))
         ws   = os.path.realpath(self.workspace)
-        if not full.startswith(ws):
+        full = os.path.realpath(os.path.join(ws, file or ""))
+        try:
+            inside_workspace = os.path.commonpath((ws, full)) == ws
+        except ValueError:
+            inside_workspace = False
+        if not inside_workspace:
             return None
         try:
             with open(full, encoding="utf-8", errors="replace") as fh:

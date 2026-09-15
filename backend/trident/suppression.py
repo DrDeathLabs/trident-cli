@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 from pathlib import Path
 
 from loguru import logger
@@ -87,10 +88,20 @@ def check_inline_suppression(workspace: str, finding: Finding) -> str | None:
     if not finding.file or not finding.line_start:
         return None
 
-    # Resolve relative to workspace; fall back to treating as absolute.
-    candidate = Path(workspace) / finding.file
-    if not candidate.exists():
-        candidate = Path(finding.file)
+    if not workspace:
+        return None
+
+    # Resolve through the workspace root only. Imported report metadata must
+    # never cause report-only mode to read a host file outside that root.
+    root = os.path.realpath(workspace)
+    candidate = os.path.realpath(os.path.join(root, finding.file))
+    try:
+        inside_workspace = os.path.commonpath((root, candidate)) == root
+    except ValueError:
+        inside_workspace = False
+    if not inside_workspace:
+        return None
+    candidate = Path(candidate)
     if not candidate.exists():
         return None
 
@@ -115,6 +126,8 @@ def apply_suppressions(db: Session, job_id: str, workspace: str) -> int:
     Returns the count of findings suppressed.
     Called in the orchestrator after the tool phase, before correlation.
     """
+    if not workspace:
+        return 0
     suppression_set = load_suppression_set(workspace)
     findings = db.query(Finding).filter(
         Finding.job_id == job_id,

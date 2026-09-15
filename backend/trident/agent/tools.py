@@ -12,9 +12,8 @@ import os
 import re
 
 from trident.eval.guard import is_scorecard_filename
+from trident.workspace import is_within, iter_workspace_files, should_skip_dir
 
-_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "vendor",
-              "dist", "build", ".mypy_cache", ".pytest_cache"}
 _MAX_FILE_BYTES = 200_000
 _MAX_READ_LINES = 400
 _MAX_GREP_RESULTS = 40
@@ -81,17 +80,15 @@ class WorkspaceTools:
     # ---- sandbox ----------------------------------------------------------
     def _resolve(self, path: str) -> str | None:
         real = os.path.realpath(os.path.join(self.ws, path or "."))
-        if real != self.ws and os.path.commonpath([real, self.ws]) != self.ws:
+        if not is_within(self.ws, real):
             return None
         return real
 
     def _iter_files(self, base: str):
-        for root, dirs, files in os.walk(base):
-            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
-            for fn in files:
-                if is_scorecard_filename(fn):
-                    continue
-                yield os.path.join(root, fn)
+        for path in iter_workspace_files(base):
+            if is_scorecard_filename(path.name):
+                continue
+            yield os.fspath(path)
 
     # ---- tools ------------------------------------------------------------
     def read_file(self, path: str, start_line=None, end_line=None) -> str:
@@ -151,7 +148,7 @@ class WorkspaceTools:
             return f"[not a directory: {path}]"
         entries = []
         for name in sorted(os.listdir(real)):
-            if name in _SKIP_DIRS:
+            if should_skip_dir(name):
                 continue
             full = os.path.join(real, name)
             entries.append(f"{name}/" if os.path.isdir(full) else name)

@@ -80,6 +80,39 @@ the review process, and high-impact results still require qualified human review
 7. Write the primary report and, when requested, the complete worked-triage
    sidecar.
 
+## Import existing scanner reports
+
+Trident can use native scanner evidence, standardized security formats, and
+heterogeneous vulnerability JSON instead of launching scanner subprocesses:
+
+```bash
+trident scan --input-file sonar-report.json --format json
+trident scan --input-file dependency-check.json --format table
+trident scan --input-file sonar-report.json \
+  --input-file dependency-check.json \
+  --format sarif --triage-output-file triage.sarif
+trident inspect vendor-report.json --format json
+trident scan --input-file vendor-report.json --mapping vendor-map.json
+```
+
+First-class deterministic adapters cover SonarQube, OWASP Dependency-Check,
+SARIF 2.1.0, and CycloneDX vulnerability JSON. Unknown security report
+structures can use safe, versioned mappings and bounded schema inference;
+Trident does not claim that every arbitrary JSON document is a vulnerability
+report. Imported records follow the same normalization, correlation, Council, judge,
+red-team, disposition, triage, and reporting path as native scanner findings.
+The original report record, input hash, review rationale, disposition, and
+triage factors remain available in the JSON, SARIF, and triage sidecar output.
+Without `--source-dir`, imported findings use `report_only` evidence and
+reachability is `unknown`. With `--source-dir`, Trident may add code context
+without running scanners. Novel discovery remains opt-in with
+`--discover-novel`.
+
+In the actionable list, `confirmed` means retained for remediation work. It
+does not mean that report-only metadata proves source-level exploitability.
+Rejected candidates, exact duplicates, and related advisories remain available
+as disposition evidence rather than being silently discarded.
+
 ## Capabilities
 
 - SAST: Semgrep, Bandit, gosec, and Checkov.
@@ -106,7 +139,7 @@ source .venv/bin/activate
 # .venv\Scripts\Activate.ps1
 
 # Install the wheel downloaded from the GitHub release:
-python -m pip install path/to/trident-0.1.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.0-py3-none-any.whl
 trident --version
 trident install-tools --verify --warmup
 ```
@@ -158,8 +191,8 @@ Exit codes are stable for automation:
 
 | Code | Meaning |
 | --- | --- |
-| `0` | No confirmed finding at or above the configured gate. |
-| `1` | At least one confirmed finding is at or above the configured gate. |
+| `0` | No retained finding at or above the configured gate. |
+| `1` | At least one retained finding is at or above the configured gate. |
 | `2` | Scan or ingestion error. |
 
 The repository includes a [SARIF workflow example](trident-scan.yml), a

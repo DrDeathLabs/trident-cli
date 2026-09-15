@@ -1,8 +1,9 @@
 """Triage — turn a pile of confirmed findings into a worked, prioritized queue.
 
-For each confirmed finding the LLM assesses factors it can judge FROM THE CODE
-(impact, attack vector, exploitability, fix effort — no deployment/arch context),
-and a transparent rubric maps those factors to a priority tier P0..P4. Every tier
+For each retained finding the LLM assesses factors from the available evidence.
+That evidence may be source context or an imported report record. It covers
+impact, attack vector, exploitability, and fix effort, without hidden deployment
+assumptions. A transparent rubric maps those factors to a priority tier P0..P4. Every tier
 is explainable ("P0 because remote + unauthenticated + RCE + trivial"), so the
 output is an auditable ordering, not a black-box score.
 
@@ -21,6 +22,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from trident.config import settings
+from trident.evidence import evidence_basis
 from trident.events.publisher import EventType, publish_event
 from trident.llm.base import ChatMessage
 from trident.models import AttackChain, Finding, Job
@@ -31,7 +33,10 @@ from trident.reliability.structured import chat_structured
 # Factor → rank. Higher = worse. The rubric below reads these.
 _IMPACT_RANK = {"rce": 4, "auth_bypass": 4, "data_exposure": 3, "data_tampering": 3,
                 "ssrf": 3, "injection": 3, "dos": 2, "info_disclosure": 1, "other": 1}
-_VECTOR_RANK = {"remote_unauth": 4, "remote_auth": 3, "adjacent": 2, "local": 1, "physical": 0}
+_VECTOR_RANK = {
+    "remote_unauth": 4, "remote_auth": 3, "adjacent": 2, "local": 1,
+    "physical": 0, "unknown": 0,
+}
 _EXPLOIT_RANK = {"trivial": 2, "moderate": 1, "difficult": 0}
 
 EXT_MAP = {
@@ -143,6 +148,7 @@ def _raise(value: str, ranks: dict, floor: str) -> str:
 
 def apply_corpus_guard(
     f: Finding, a: TriageAssessment, current_impact: str, current_vector: str,
+    *, report_only: bool = False, apply_changes: bool = True,
 ) -> tuple[str, str, str | None]:
     """Adjust (impact, vector) when the CWE corpus disagrees with the LLM's tier.
 
@@ -173,6 +179,17 @@ def apply_corpus_guard(
     if expected_tier_num == current_tier_num:
         return current_impact, current_vector, None
 
+    if not apply_changes:
+        # Statistical prevalence is evidence for review, not proof of source
+        # reachability or exploitability. The production pipeline records the
+        # disagreement but leaves model factors unchanged for code-grounded
+        # guards and human review.
+        return current_impact, current_vector, (
+            f"corpus-observation: {cwe} (n={profile['cve_count']:,} CVEs) "
+            f"expected {expected}, model assessed P{current_tier_num}; "
+            "no impact/vector change without direct evidence"
+        )
+
     if expected_tier_num > current_tier_num:
         # Over-escalation: cap down to corpus ceiling.
         if expected not in _TIER_CEILINGS:
@@ -188,6 +205,11 @@ def apply_corpus_guard(
         ref_impact, ref_vector = _TIER_FLOORS[expected]
         new_impact = _raise(current_impact, _IMPACT_RANK, ref_impact)
         new_vector = _raise(current_vector, _VECTOR_RANK, ref_vector)
+        direction = "↑"
+    if report_only:
+        # Corpus prevalence can adjust impact, but it cannot manufacture source
+        # exposure. Keep report-only attack vectors unknown after calibration.
+        new_vector = "unknown"
         direction = "↑"
 
     if new_impact == current_impact and new_vector == current_vector:
@@ -294,6 +316,35 @@ def tier_for(a: TriageAssessment, in_chain: bool = False,
     return f"P{t}"
 
 
+def _import_triage_metadata(f: Finding) -> tuple[bool, dict]:
+    raw = (f.raw_outputs or {}).get("raw") or {}
+    imported = bool(raw.get("import_format"))
+    return imported, raw
+
+
+def _kev_floor(f: Finding, tier: str, report_only: bool) -> tuple[str, str | None]:
+    """Apply the bounded report-only KEV floor only on an identity match."""
+    if not report_only:
+        return tier, None
+    raw = (f.raw_outputs or {}).get("raw") or {}
+    kev = raw.get("kev") or {}
+    identity = raw.get("cpe_identity") or {}
+    direct_match = kev.get("listed") and identity.get("status") == "match"
+    correlation = (f.raw_outputs or {}).get("correlation") or {}
+    grouped_match = next(
+        (
+            item for item in correlation.get("kev_floor_evidence", [])
+            if isinstance(item, dict)
+            and (item.get("kev") or {}).get("listed")
+            and (item.get("identity") or {}).get("status") == "match"
+        ),
+        None,
+    )
+    if (direct_match or grouped_match) and tier not in {"P0", "P1"}:
+        return "P1", "kev-floor: direct KEV evidence with matched package/CPE identity"
+    return tier, None
+
+
 # Start of a function/method/route — where auth decorators + guards live.
 _DEF_RE = re.compile(r"^\s*(async\s+def |def |func |function\b|fun |sub |class )")
 _MAX_CTX_CHARS = 4000
@@ -303,9 +354,15 @@ def _read_context(workspace: str, path: str, line_start: int, line_end: int, aft
     """Read the ENCLOSING function (with its decorators) around the finding, not just
     a few lines — so triage can see the route's auth guard (@login_required,
     is_authenticated, permission checks) and judge reachability correctly."""
-    full = os.path.realpath(os.path.join(workspace, path or ""))
+    if not workspace:
+        return "[source context unavailable: imported report metadata only]"
     ws = os.path.realpath(workspace)
-    if not full.startswith(ws):
+    full = os.path.realpath(os.path.join(ws, path or ""))
+    try:
+        inside_workspace = os.path.commonpath((ws, full)) == ws
+    except ValueError:
+        inside_workspace = False
+    if not inside_workspace:
         return ""
     try:
         with open(full, encoding="utf-8", errors="replace") as f:
@@ -331,19 +388,21 @@ def _read_context(workspace: str, path: str, line_start: int, line_end: int, aft
     return body[:_MAX_CTX_CHARS]
 
 
-def _assess(workspace: str, finding: Finding, budget) -> TriageAssessment:
+def _assess(workspace: str, finding: Finding, budget):
     """DB-free LLM assessment of one finding's triage factors."""
     if budget is not None and not budget.take(1):
-        return TriageAssessment()  # out of budget -> conservative default
+        return None, "triage budget exhausted"  # unresolved, never a verdict
     snippet = _read_context(workspace, finding.file, finding.line_start, finding.line_end)
     ext = EXT_MAP.get(os.path.splitext(finding.file or "")[1].lower(), "text")
-    prompt = build_triage_prompt(finding, snippet, ext)
+    prompt = build_triage_prompt(finding, snippet, ext, workspace)
     res = chat_structured(
         [ChatMessage("system", TRIAGE_SYSTEM), ChatMessage("user", prompt)],
         TriageAssessment, model=settings.llm.triage_model or settings.llm.default_model,
         temperature=0.0,
+        context={"run_id": finding.job_id, "finding_id": finding.id,
+                 "task_type": "triage", "council_role": "triage"},
     )
-    return res.obj if res.ok else TriageAssessment()
+    return (res.obj, None) if res.ok else (None, res.error or res.status)
 
 
 def run_triage(db: Session, job_id: str, budget=None) -> dict:
@@ -373,26 +432,57 @@ def run_triage(db: Session, job_id: str, budget=None) -> dict:
 
     # LLM assessments run DB-free in a bounded pool; persistence on this thread.
     workers = max(1, settings.llm.concurrency)
-    assessments: dict[str, TriageAssessment] = {}
+    assessments: dict[str, TriageAssessment | None] = {}
+    assessment_errors: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_assess, workspace, f, budget): f for f in findings}
         for fut in as_completed(futs):
             f = futs[fut]
             try:
-                assessments[f.id] = fut.result()
+                assessed = fut.result()
+                # Keep compatibility with deterministic tests/extensions that
+                # monkeypatch _assess to return only the typed object.
+                if isinstance(assessed, tuple):
+                    assessment, error = assessed
+                else:
+                    assessment, error = assessed, None
+                assessments[f.id] = assessment
+                if error:
+                    assessment_errors[f.id] = error
             except Exception:
                 logger.exception("triage assessment failed")
-                assessments[f.id] = TriageAssessment()
+                assessments[f.id] = None
+                assessment_errors[f.id] = "triage assessment exception"
 
     counts = {t: 0 for t in TIERS}
     for f in findings:
-        a = assessments.get(f.id) or TriageAssessment()
+        a = assessments.get(f.id)
+        if a is None:
+            reason = assessment_errors.get(f.id, "triage model response unresolved")
+            f.status = "unresolved_model_error"
+            f.priority = None
+            f.review_error = reason[:1000]
+            f.triage = {
+                **(f.triage or {}), "unresolved": True,
+                "unresolved_reason": reason[:1000],
+                "evidence_basis": evidence_basis(f, workspace),
+            }
+            publish_event(db, job_id, EventType.FINDING_UNRESOLVED, {
+                "finding_id": f.id, "stage": "triage", "reason": reason[:300],
+            })
+            continue
         in_chain = f.id in chained_ids
+        contested = bool((f.triage or {}).get("contested", False))
+        basis = evidence_basis(f, workspace)
+        report_only = basis == "report_only"
 
         # Guard 1 — corpus guard: statistical pre-processor on raw LLM output.
         # Bidirectional: raises under-escalations, caps over-escalations.
         # Runs FIRST so code-grounded guards can override its output.
-        impact, vector, corpus_note = apply_corpus_guard(f, a, a.impact, a.attack_vector)
+        impact, vector, corpus_note = apply_corpus_guard(
+        f, a, a.impact, "unknown" if report_only else a.attack_vector,
+            report_only=report_only, apply_changes=False,
+        )
 
         # Guard 2 — class guard: deterministic, monotonic cap for secret/hygiene.
         # Overrides corpus output for known over-escalation classes (e.g. a corpus
@@ -407,17 +497,58 @@ def run_triage(db: Session, job_id: str, budget=None) -> dict:
             workspace, f.file or "", f.line_start or 0, vector, _reach_ctx
         )
 
-        tier = tier_for(a, in_chain, impact=impact, attack_vector=vector)
+        chain_members = {
+            member.id
+            for chain in chains
+            if f.id in {member.id for member in chain.findings}
+            for member in chain.findings
+        }
+        chain_basis = None
+        if in_chain:
+            chain_basis = "report_derived" if report_only else "source_grounded"
+        source_exploitation_evidence = (
+            chain_basis == "source_grounded" and reachability == "reachable"
+        )
+        chain_high_tier_eligible = (
+            len(chain_members) >= 2 or source_exploitation_evidence
+        )
+        base_tier = tier_for(a, False, impact=impact, attack_vector=vector)
+        tier = base_tier
+        if in_chain:
+            chained_tier = tier_for(a, True, impact=impact, attack_vector=vector)
+            if chained_tier in {"P0", "P1"} and not chain_high_tier_eligible:
+                chain_note = (
+                    "report-derived chain elevation suppressed for P0/P1: "
+                    "requires multiple distinct confirmed findings or source-grounded "
+                    "reachable evidence"
+                )
+            else:
+                tier = chained_tier
+                chain_note = None
+        else:
+            chain_note = None
+        tier, kev_note = _kev_floor(f, tier, report_only)
+        prior_triage = f.triage or {}
         f.priority = tier
         f.triage = {
             "impact": impact, "attack_vector": vector,
             "exploitability": a.exploitability, "fix_effort": a.fix_effort,
             "rationale": a.rationale, "in_chain": in_chain,
             "model_impact": a.impact, "model_attack_vector": a.attack_vector,
+            "scanner_severity": f.scanner_severity or f.severity,
+            "model_severity": f.model_severity,
             "guard": guard_note,
             "reach_guard": reach_note,
             "reachability": reachability,
             "corpus_guard": corpus_note,
+            "contested": contested,
+            "import_evidence_conflict": prior_triage.get("import_evidence_conflict"),
+            "evidence_basis": basis,
+            "chain_basis": chain_basis,
+            "chain_member_count": len(chain_members),
+            "chain_priority_eligible": chain_high_tier_eligible if in_chain else False,
+            "chain_priority_suppressed_reason": chain_note,
+            "kev_floor": kev_note,
         }
         counts[tier] += 1
     db.commit()

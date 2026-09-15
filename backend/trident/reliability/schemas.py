@@ -240,7 +240,7 @@ ImpactType = Literal[
     "rce", "auth_bypass", "data_exposure", "data_tampering", "ssrf",
     "injection", "dos", "info_disclosure", "other",
 ]
-AttackVector = Literal["remote_unauth", "remote_auth", "adjacent", "local", "physical"]
+AttackVector = Literal["remote_unauth", "remote_auth", "adjacent", "local", "physical", "unknown"]
 Exploitability = Literal["trivial", "moderate", "difficult"]
 FixEffort = Literal["trivial", "moderate", "involved"]
 
@@ -259,7 +259,7 @@ _VECTOR_ALIASES = {
     "unauthenticated": "remote_unauth", "internet": "remote_unauth",
     "remote_auth": "remote_auth", "authenticated": "remote_auth",
     "adjacent": "adjacent", "adjacent network": "adjacent",
-    "local": "local", "cli": "local", "physical": "physical",
+    "local": "local", "cli": "local", "physical": "physical", "unknown": "unknown",
 }
 _EXPLOIT_ALIASES = {
     "trivial": "trivial", "easy": "trivial", "low": "trivial",

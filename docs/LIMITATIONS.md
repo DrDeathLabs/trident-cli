@@ -64,3 +64,13 @@ Trident analyzes source and configuration files. It does not:
   supports that input
 
 Only scan code you own or are authorized to analyze.
+
+## Imported JSON evidence
+
+Import supports standardized and heterogeneous software-security JSON, not
+literal arbitrary JSON. Unknown schemas require a sufficiently reliable
+deterministic mapping or an explicit `trident-json-mapping-v1` file. Ambiguous,
+weakly evidenced, malformed, and non-security records are accounted for and
+are not fabricated into findings. Report-only imports cannot establish source
+reachability or exploitability; supply `--source-dir` for optional code
+context.

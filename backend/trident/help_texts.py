@@ -6,7 +6,7 @@ HELP_TOPICS: dict[str, str] = {
     "setup": """
 [bold cyan]Trident CLI setup[/bold cyan]
 
-1. Install the GitHub release wheel: [green]python -m pip install path/to/trident-0.1.0-py3-none-any.whl[/green]
+1. Install the GitHub release wheel: [green]python -m pip install path/to/trident-0.3.0-py3-none-any.whl[/green]
 2. Install tools: [green]trident install-tools --verify[/green]
 3. Configure Ollama, OpenAI, or Anthropic with the config commands.
 4. Scan a local path: [green]trident scan .[/green]
@@ -39,7 +39,7 @@ Exit codes:
   0 = clean, 1 = confirmed findings at or above the gate, 2 = scan error
 
 Install the package and scanner tools, then write machine-readable output:
-  [green]python -m pip install path/to/trident-0.1.0-py3-none-any.whl
+  [green]python -m pip install path/to/trident-0.3.0-py3-none-any.whl
   trident install-tools
   trident scan . --format sarif --output-file trident.sarif --quiet[/green]
 
@@ -63,15 +63,17 @@ scan.max_iterations, scan.severity_gate, output.format, and model.data_dir.
 [bold cyan]Output formats[/bold cyan]
 
 [bold]table[/bold] — terminal summary, selected by default.
-[bold]json[/bold] — confirmed findings, triage metadata, and attack chains.
+[bold]json[/bold] — retained findings, review evidence, triage metadata, and attack chains.
 [bold]sarif[/bold] — SARIF 2.1.0 for code-scanning integrations.
 
-Triage runs automatically after confirmation. Save the complete worked queue
+Triage runs automatically after review. A confirmed finding is retained for
+remediation work, not automatically proof of exploitability. Save the complete worked queue
 as a sidecar in the selected format:
   [green]trident scan . --format json --output-file results.json \
     --triage-output-file triage.json[/green]
 The sidecar groups findings by P0-P4 and includes playbooks, SLAs, factors,
-rationale, attack-chain context, and analyst overrides.
+rationale, attack-chain context, evidence basis, review provenance, original
+imported records, dispositions, and analyst overrides.
 
 Examples:
   [green]trident scan . --format json --output-file findings.json --quiet[/green]
@@ -79,16 +81,22 @@ Examples:
 
 Use quiet mode when stdout or an output stream must contain only the selected
 machine-readable format.
+
+Import standardized or heterogeneous JSON without running scanners:
+  [green]trident inspect report.json --format json
+  trident scan --input-file report.json --format json[/green]
+Use [green]--mapping FILE[/green] for an explicit trident-json-mapping-v1
+mapping and [green]--no-schema-ai[/green] to keep schema inference deterministic.
 """,
-    "guards": """
-[bold cyan]Security guards[/bold cyan]
+"guards": """
+[bold cyan]Triage adjustment mechanisms[/bold cyan]
 
 Class guard applies deterministic caps to finding classes that language models
 systematically over-rate. Corpus guard calibrates severity against vulnerability
 data after model refresh. Reachability guard uses static call-graph analysis
 and fails open when it cannot determine a path.
 
-Disable guards only for debugging:
+Disable these adjustments only for debugging:
   [green]trident scan . --no-guards[/green]
 """,
     "experts": """
@@ -135,7 +143,7 @@ Run [green]trident help <topic>[/green] for details:
   [green]ci[/green]         exit codes and SARIF
   [green]config[/green]     settings and precedence
   [green]output[/green]     table, JSON, and SARIF
-  [green]guards[/green]     calibration guards
+  [green]guards[/green]     triage adjustment mechanisms
   [green]experts[/green]    council roles
   [green]tools[/green]      scanner adapters
 

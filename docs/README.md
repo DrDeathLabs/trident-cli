@@ -12,6 +12,8 @@ trail. They also document where human review remains mandatory.
   and local data locations.
 - [Quick start](QUICK_START.md) - configure a backend and complete a first scan.
 - [Scanning](SCANNING.md) - source types, profiles, options, and exit codes.
+- [JSON ingestion](JSON_INGESTION.md) - standardized formats, safe generic
+  mappings, inference, provenance, and accounting.
 
 ## Scan operators and triage reviewers
 
@@ -45,6 +47,7 @@ trail. They also document where human review remains mandatory.
 - [Development](DEVELOPMENT.md) - repository layout and local checks.
 - [Architecture](ARCHITECTURE.md) - scan data flow, persistence, and trust
   boundaries.
+- [Validation](VALIDATION.md) - layered tests, holdouts, and CLI evidence.
 - [Feature status](FEATURE_STATUS.md) - supported, optional, experimental, and
   unsupported behavior.
 

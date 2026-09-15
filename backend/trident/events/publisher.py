@@ -125,6 +125,8 @@ class EventType:
     JOB_FAILED = "job.failed"
 
     SCAN_TOOLS_START = "scan.tools.start"
+    SCAN_IMPORT_START = "scan.import.start"
+    SCAN_IMPORT_COMPLETE = "scan.import.complete"
     SCAN_CORRELATE_START = "scan.correlate.start"
     SCAN_EXPERTS_START = "scan.experts.start"
     SCAN_DEBATE_START = "scan.debate.start"
@@ -140,10 +142,19 @@ class EventType:
 
     FINDING_RAW = "finding.raw"
     FINDING_CONFIRMED = "finding.confirmed"
+    FINDING_DISPUTED_PROMOTED = "finding.disputed_promoted"
+    FINDING_IMPORT_CONFLICT = "finding.import_conflict"
     FINDING_REFUTED = "finding.refuted"
+    FINDING_OUT_OF_SCOPE = "finding.out_of_scope"
     FINDING_NOVEL = "finding.novel"
     FINDING_DUPLICATE = "finding.duplicate"
+    FINDING_RELATED = "finding.related"
     FINDING_PARSE_ERROR = "finding.parse_error"
+    FINDING_UNRESOLVED = "finding.unresolved"
+
+    LLM_REQUEST_STARTED = "llm.request.started"
+    LLM_REQUEST_COMPLETED = "llm.request.completed"
+    LLM_REQUEST_UNRESOLVED = "llm.request.unresolved"
 
     DEBATE_MESSAGE = "debate.message"
     DEBATE_CROSS_EXAM = "debate.cross_exam"

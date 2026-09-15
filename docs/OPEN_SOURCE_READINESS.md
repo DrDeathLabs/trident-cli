@@ -11,7 +11,7 @@ wheel from the release and install it locally:
 
 ```bash
 python -m venv .venv
-python -m pip install path/to/trident-0.1.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.0-py3-none-any.whl
 ```
 
 The PyPI name `trident` is already occupied by another project. A future

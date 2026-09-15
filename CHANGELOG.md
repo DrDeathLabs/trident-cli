@@ -3,6 +3,17 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] - 2026-09-15
+
+### Added
+
+- Deterministic vulnerability evidence adapters for SARIF 2.1.0 and CycloneDX
+  vulnerability JSON alongside SonarQube and Dependency-Check imports.
+- Safe versioned generic JSON mappings, bounded structural inference, `trident
+  inspect`, field-level provenance, report hashes, and complete record accounting.
+- Mixed-format import support through the existing correlation, Council, judge,
+  attack-chain, guard, triage, and reporting pipeline.
+
 ## [0.1.0] - Initial public CLI release
 
 ### Added
