@@ -19,7 +19,7 @@ dependencies = [
     "platformdirs>=4.0",
     "scikit-learn>=1.5",
     "joblib>=1.4",
-    "rich>=13.0",
+    "rich>=15.0.0",
     "tomli-w>=1.0",
 ]
 
