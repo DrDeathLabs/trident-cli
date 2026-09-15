@@ -33,9 +33,10 @@ trident scan --input-file sonar-report.json \
   --input-file dependency-check-report.json
 ~~~
 
-The supported formats are SonarQube issue JSON and OWASP Dependency-Check JSON
-with `reportSchema: 1.1`. Other JSON schemas are rejected rather than converted
-implicitly.
+Deterministic first-class formats are SonarQube issue JSON, OWASP
+Dependency-Check JSON with `reportSchema: 1.1`, SARIF 2.1.0, and CycloneDX JSON
+with vulnerability data. Other heterogeneous security JSON can use automatic
+inference or a versioned explicit mapping. See [JSON ingestion](JSON_INGESTION.md).
 
 Imported findings use the normal correlation, Council, judge, red-team, triage,
 report, and exit-code pipeline. A report-only import does not have source code
@@ -59,8 +60,10 @@ trident scan --input-file sonar-report.json \
   --source-dir /path/to/source --discover-novel
 ~~~
 
-Use `--input-format auto`, `sonarqube`, or `dependency-check` when detection
-needs to be explicit. Multiple input files are validated as one import job. A
+Use `--input-format auto`, `sonarqube`, `dependency-check`, `sarif`,
+`cyclonedx`, or `generic-json` when detection needs to be explicit. Use
+`--mapping FILE` for a deterministic user mapping and `--no-schema-ai` to
+disable optional schema mapping. Multiple input files are validated as one import job. A
 missing, unreadable, malformed, duplicate, or mismatched input fails the job
 with exit code 2 rather than producing a partial result.
 

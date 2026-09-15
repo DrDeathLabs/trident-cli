@@ -76,9 +76,11 @@ def test_detects_supported_formats():
     assert detect_format(_dependency_report()) == "dependency-check"
 
 
-def test_rejects_cyclonedx_explicitly():
-    with pytest.raises(ImportErrorValue, match="CycloneDX"):
-        detect_format({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []})
+def test_detects_cyclonedx_vulnerability_report():
+    assert detect_format({
+        "bomFormat": "CycloneDX", "specVersion": "1.5", "components": [],
+        "vulnerabilities": [{"id": "CVE-2025-0001"}],
+    }) == "cyclonedx"
 
 
 def test_invalid_json_is_rejected(tmp_path):

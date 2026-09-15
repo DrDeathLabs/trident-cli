@@ -16,7 +16,7 @@ install every scanner binary.
 ### From a GitHub release artifact
 
 ~~~bash
-python -m pip install path/to/trident-0.2.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.0-py3-none-any.whl
 ~~~
 
 Download the wheel from the GitHub release, then install that local file.
@@ -84,7 +84,7 @@ Check tool status without changing anything:
 trident install-tools --check
 ~~~
 
-Verify all twelve configured tools:
+Verify all twelve tools:
 
 ~~~bash
 trident install-tools --verify
@@ -119,8 +119,9 @@ Tools are stored in the platform-appropriate user data directory:
 Ollama is the default backend:
 
 ~~~bash
-TRIDENT_LLM_BACKEND=ollama TRIDENT_OLLAMA_HOST=http://localhost:11434 \
-EXPERT_MODEL=gemma4:31b-cloud trident scan .
+trident config set llm.backend ollama
+trident config set llm.base_url http://localhost:11434
+trident config set llm.expert_model gemma4:31b-cloud
 ~~~
 
 See [LLM_BACKENDS](LLM_BACKENDS.md) for cloud backend setup and data-handling

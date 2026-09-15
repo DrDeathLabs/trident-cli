@@ -16,7 +16,7 @@ GitHub release, or install the source checkout:
 python -m venv .venv
 .venv\Scripts\activate      # Windows
 source .venv/bin/activate   # macOS/Linux
-python -m pip install path/to/trident-0.2.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.0-py3-none-any.whl
 ```
 
 From a source checkout:
@@ -196,15 +196,6 @@ trident config get llm.base_url
 ```bash
 trident config set llm.base_url http://192.168.1.50:11434
 ```
-
-### Ollama - returned model identity is rejected
-
-Trident records both the requested model and the identity returned by Ollama.
-A cloud-tagged request may return its exact native identity, such as
-`gemma4:31b-cloud` returning `gemma4:31b`; that one-way alias is accepted. An
-unrelated returned identity is rejected and Trident does not silently fall back.
-Check `TRIDENT_OLLAMA_MODEL`, any per-role model variables, and the Ollama
-server's model response before retrying.
 
 ### OpenAI / Anthropic - `Authentication error`
 
