@@ -91,7 +91,7 @@ Attack chains appear in the top-level `attack_chains` array in JSON output. Each
 
 ## Example walkthrough
 
-PyGoat scan, simplified:
+Illustrative application scan, simplified:
 
 **Findings going in:**
 - Finding A: Path traversal in `/view` endpoint (P3, `reachability: reachable`)

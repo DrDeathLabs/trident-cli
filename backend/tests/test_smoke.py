@@ -85,7 +85,7 @@ def test_eval_matcher_normalizes_windows_absolute_paths():
         "id": "f1", "tool": "semgrep", "rule_id": "python.sql-injection",
         "severity": "high", "title": "SQL injection",
         "description": "SQL injection via user input.",
-        "file": r"C:\temp\pygoat\app\main.py", "line_start": 10, "line_end": 15,
+        "file": r"C:\temp\exampleproject\app\main.py", "line_start": 10, "line_end": 15,
         "cwe": "CWE-89", "status": "confirmed", "iteration": 0,
     }]
     result = match_findings(sc, findings)

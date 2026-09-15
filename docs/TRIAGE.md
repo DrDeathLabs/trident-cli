@@ -131,32 +131,11 @@ reachability, deterministic adjustments, and chain reasoning.
 
 ---
 
-## Evaluation snapshot: from alert barbell to worked queue
+## Validation scope
 
-The following is a Trident evaluation snapshot from one 215-finding OWASP
-PyGoat job. It isolates the class-correction experiment: a stronger model was
-tested first, then the deterministic correction was applied. It is evidence of
-the targeted failure-mode correction and its effect on queue shape-not an
-independent benchmark, universal guarantee, or claim that every target will
-produce this distribution.
-
-| Configuration | P0 | P1 | P2 | P3 | P4 |
-|---|---:|---:|---:|---:|---:|
-| Gemma baseline | 47 | 79 | 35 | 2 | 52 |
-| Nemotron model swap | 34 | 77 | 27 | 14 | 63 |
-| Nemotron + deterministic correction | **13** | 52 | 53 | 43 | 54 |
-
-On the same evaluation, 10 of 13 planted PyGoat vulnerabilities were detected.
-Among those 10 detected findings, 8/10 matched the expert-assigned tier exactly,
-10/10 landed within one tier, over-escalation was 0, and two findings were
-under-escalated by one tier. The ground truth was expert code review rather than
-an independently blinded benchmark, so these figures describe consistency with
-that review and should be read with that limitation.
-
-The important result is the decision shape: the baseline concentrated alerts at
-the extremes, while the triage workflow produced a graded queue in which P0
-remained available for genuinely urgent findings and lower tiers carried the
-work that should be scheduled rather than escalated indiscriminately.
+The approved public validation summary, including repeatability and import
+accounting, is maintained in [VALIDATION.md](VALIDATION.md). It is evidence
+within the stated test scope, not a universal performance or correctness claim.
 
 ---
 
