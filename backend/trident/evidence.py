@@ -67,8 +67,6 @@ def _import_details(finding: Finding) -> dict[str, Any] | None:
     details: dict[str, Any] = {
         "format": fmt,
         "record": raw.get("record"),
-        "canonical": raw.get("canonical"),
-        "provenance": raw.get("provenance"),
     }
     if fmt == "dependency-check":
         details.update({
@@ -80,21 +78,6 @@ def _import_details(finding: Finding) -> dict[str, Any] | None:
             "dependency_vulnerability_count": raw.get("dependency_vulnerability_count"),
             "kev": raw.get("kev") or {"listed": False, "source": "imported_record"},
             "cpe_identity": raw.get("cpe_identity") or {"status": "unknown"},
-        })
-    else:
-        details.update({
-            "source_record_id": raw.get("source_record_id"),
-            "identifiers": raw.get("identifiers") or {},
-            "package": raw.get("package"),
-            "installed_version": raw.get("InstalledVersion"),
-            "ecosystem": raw.get("ecosystem"),
-            "purl": raw.get("purl"),
-            "cpe": raw.get("cpe"),
-            "fixed_version": raw.get("fixed_version"),
-            "references": raw.get("references") or [],
-            "cvss_score": raw.get("cvss_score"),
-            "cvss_vector": raw.get("cvss_vector"),
-            "source_status": raw.get("source_status"),
         })
     return details
 

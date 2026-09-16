@@ -16,22 +16,11 @@ source .venv/bin/activate
 .\.venv\Scripts\Activate.ps1
 
 # Install the downloaded GitHub release wheel, or use the source checkout.
-python -m pip install path/to/trident-0.3.0-py3-none-any.whl
+python -m pip install path/to/trident-0.2.0-py3-none-any.whl
 trident --help
 ```
 
 You should see the Trident help output listing the available commands (`scan`, `config`, `model`, `install-tools`, `help`).
-
-To triage an existing security report without running scanners, inspect it first
-and then import it:
-
-```bash
-trident inspect findings.json --format json
-trident scan --input-file findings.json --format json
-```
-
-For a vendor schema that needs explicit mapping, use `--mapping FILE`; use
-`--no-schema-ai` when schema inference must remain fully deterministic.
 
 ---
 

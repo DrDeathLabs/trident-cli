@@ -57,13 +57,9 @@ review evidence, so the queue can be acted on without losing the decision trail.
 SARIF works with code-scanning workflows, JSON supports automation, table output
 is useful at the terminal, and the triage sidecar preserves the complete record.
 
-In one 215-finding PyGoat evaluation, the documented deterministic correction
-changed the P0-P4 shape from a scanner/model-driven barbell (47 P0 findings) to
-a graded queue with 13 P0 findings. That snapshot also reached exact expert-tier
-agreement on 8 of 10 detected planted findings and agreement within one tier on
-all 10. These are Trident evaluation results, not universal performance claims;
-see the [full triage evaluation snapshot](docs/TRIAGE.md#evaluation-snapshot-from-alert-barbell-to-worked-queue)
-for scope and limitations.
+Public validation results are summarized in [docs/VALIDATION.md](docs/VALIDATION.md).
+They describe repeatability and import accounting within the tested scope; they
+are not a universal accuracy guarantee or autonomous security approval.
 
 Trident is not an autonomous security approval system. Model output is input to
 the review process, and high-impact results still require qualified human review.
@@ -82,8 +78,8 @@ the review process, and high-impact results still require qualified human review
 
 ## Import existing scanner reports
 
-Trident can use native scanner evidence, standardized security formats, and
-heterogeneous vulnerability JSON instead of launching scanner subprocesses:
+Trident can use existing SonarQube issue JSON and OWASP Dependency-Check
+`reportSchema` 1.1 JSON instead of launching scanner subprocesses:
 
 ```bash
 trident scan --input-file sonar-report.json --format json
@@ -91,15 +87,9 @@ trident scan --input-file dependency-check.json --format table
 trident scan --input-file sonar-report.json \
   --input-file dependency-check.json \
   --format sarif --triage-output-file triage.sarif
-trident inspect vendor-report.json --format json
-trident scan --input-file vendor-report.json --mapping vendor-map.json
 ```
 
-First-class deterministic adapters cover SonarQube, OWASP Dependency-Check,
-SARIF 2.1.0, and CycloneDX vulnerability JSON. Unknown security report
-structures can use safe, versioned mappings and bounded schema inference;
-Trident does not claim that every arbitrary JSON document is a vulnerability
-report. Imported records follow the same normalization, correlation, Council, judge,
+Imported records follow the same normalization, correlation, Council, judge,
 red-team, disposition, triage, and reporting path as native scanner findings.
 The original report record, input hash, review rationale, disposition, and
 triage factors remain available in the JSON, SARIF, and triage sidecar output.
@@ -139,7 +129,7 @@ source .venv/bin/activate
 # .venv\Scripts\Activate.ps1
 
 # Install the wheel downloaded from the GitHub release:
-python -m pip install path/to/trident-0.3.0-py3-none-any.whl
+python -m pip install path/to/trident-0.2.0-py3-none-any.whl
 trident --version
 trident install-tools --verify --warmup
 ```
@@ -154,16 +144,19 @@ python -m pip install .
 Configure a review backend, then scan an authorized source tree:
 
 ```bash
-trident config set llm.backend ollama
-trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model gemma4:31b-cloud
-trident scan /path/to/source
+TRIDENT_LLM_BACKEND=ollama TRIDENT_OLLAMA_HOST=http://localhost:11434 \
+EXPERT_MODEL=gemma4:31b-cloud trident scan /path/to/source
 ```
 
 The first tool setup downloads managed scanner binaries and installs the
 Python-managed scanners into the active Python environment. Node.js/npm is
 required for npm-audit; Trident does not install Node.js. Go-based tools use an
 existing Go installation or a user-data bootstrap runtime.
+
+For an Ollama Cloud tag, Trident records both the requested alias and the model
+identity returned by Ollama. The exact native identity corresponding to a
+cloud-tagged request is accepted; an unrelated returned model is rejected and
+there is no silent fallback.
 
 The optional corpus-profile triage adjustment is built separately:
 
@@ -230,7 +223,6 @@ backend/
 └── tests/
 docs/
 scripts/
-eval/                 # scorecards and evaluation metadata
 trident-scan.yml      # CI SARIF example
 ```
 
