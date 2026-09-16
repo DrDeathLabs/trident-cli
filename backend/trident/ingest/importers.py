@@ -18,11 +18,16 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from trident.events.publisher import EventType, publish_event
+from trident.ingest.adapters import parse_cyclonedx, parse_sarif
+from trident.ingest.contracts import RecordAccounting, mapping_sha256
+from trident.ingest.inference import infer_mapping, propose_mapping_with_model, schema_ai_requested
+from trident.ingest.mapping import MappingError, apply_mapping, mapping_from_file
+from trident.ingest.registry import detect_format as registry_detect_format
 from trident.models import Finding, Severity, stable_finding_hash
 from trident.tools.base import RawFinding
 from trident.workspace import iter_workspace_files
 
-SUPPORTED_FORMATS = ("sonarqube", "dependency-check")
+SUPPORTED_FORMATS = ("sonarqube", "dependency-check", "sarif", "cyclonedx", "generic-json")
 
 _VERSION_PREFIX = re.compile(
     r"^[vV]?(?P<version>\d+(?:\.\d+){0,3}(?:[-+][0-9A-Za-z.-]+)?)"
@@ -42,6 +47,10 @@ class ImportedReport:
     records: int
     findings: tuple[RawFinding, ...]
     skipped: tuple[dict[str, Any], ...] = ()
+    accounting: dict[str, Any] | None = None
+    mapping: dict[str, Any] | None = None
+    mapping_source: str = "known_adapter"
+    mapping_stats: dict[str, Any] | None = None
 
 
 def _sha256(path: Path) -> str:
@@ -58,25 +67,75 @@ def _as_dict(value: Any, label: str) -> dict[str, Any]:
     return value
 
 
-def detect_format(payload: dict[str, Any]) -> str:
-    """Detect only the two intentionally supported report contracts."""
-    if isinstance(payload.get("issues"), list) and (
-        "paging" in payload or "total" in payload or "components" in payload
-    ):
-        return "sonarqube"
-    if str(payload.get("reportSchema", "")) == "1.1" and isinstance(
-        payload.get("dependencies"), list
-    ):
-        return "dependency-check"
-    if "bomFormat" in payload or "specVersion" in payload:
-        raise ImportErrorValue(
-            "CycloneDX JSON is not supported by this importer; use a SonarQube "
-            "or OWASP Dependency-Check JSON report"
-        )
+def detect_format(payload: Any) -> str:
+    """Return a deterministic first-class format or fail closed."""
+    try:
+        detected = registry_detect_format(payload)
+    except ValueError as exc:
+        raise ImportErrorValue(str(exc)) from exc
+    if detected:
+        return detected
     raise ImportErrorValue(
-        "unsupported JSON report; expected SonarQube issue JSON or "
-        "OWASP Dependency-Check reportSchema 1.1"
+        "unsupported known report envelope; use generic JSON inference or provide "
+        "a trident-json-mapping-v1 mapping"
     )
+
+
+def _bounded_json(payload: Any, *, depth: int = 0, nodes: list[int] | None = None) -> None:
+    nodes = nodes if nodes is not None else [0]
+    if depth > 64:
+        raise ImportErrorValue("JSON nesting exceeds the safety limit of 64 levels")
+    nodes[0] += 1
+    if nodes[0] > 1_000_000:
+        raise ImportErrorValue("JSON input exceeds the safety node limit")
+    if isinstance(payload, dict):
+        for value in payload.values():
+            _bounded_json(value, depth=depth + 1, nodes=nodes)
+    elif isinstance(payload, list):
+        for value in payload:
+            _bounded_json(value, depth=depth + 1, nodes=nodes)
+
+
+def _object_pointer(payload: Any, target: Any, pointer: str = "", depth: int = 0) -> str | None:
+    """Find a source pointer for an adapter-retained object by identity."""
+    if depth > 64:
+        return None
+    if payload is target:
+        return pointer
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            found = _object_pointer(value, target, f"{pointer}/{str(key).replace('~', '~0').replace('/', '~1')}", depth + 1)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload):
+            found = _object_pointer(value, target, f"{pointer}/{index}", depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def _attach_legacy_provenance(
+    payload: Any, findings: list[RawFinding], *, report_sha256: str,
+    source_format: str, source_context_available: bool,
+) -> None:
+    identity = f"{source_format}:deterministic-adapter-v1"
+    for finding in findings:
+        raw = finding.raw if isinstance(finding.raw, dict) else {}
+        record = raw.get("record")
+        pointer = _object_pointer(payload, record) if record is not None else None
+        pointer = pointer or raw.get("record_pointer") or ""
+        raw.setdefault("report_sha256", report_sha256)
+        raw.setdefault("record_pointer", pointer)
+        raw.setdefault("mapping_identity", identity)
+        raw.setdefault("source_context_available", source_context_available)
+        finding.raw = raw
+        finding.source_format = source_format
+        finding.report_sha256 = report_sha256
+        finding.record_pointer = pointer
+        finding.mapping_identity = identity
+        finding.evidence_basis = "source_grounded" if source_context_available else "report_only"
+        finding.source_context_available = source_context_available
 
 
 def _severity(value: Any) -> str:
@@ -341,7 +400,9 @@ def _parse_sonarqube(
                 "SonarQube reports a quick fix for this issue."
                 if issue.get("quickFixAvailable") else ""
             ),
-            raw={"import_format": "sonarqube", "record": issue},
+            raw={"import_format": "sonarqube", "record": issue, "severity_original": issue.get("severity")},
+            source_format="sonarqube", source_record_id=str(issue.get("key") or issue["rule"]),
+            source_status=status,
         ))
     return out, len(issues), skipped
 
@@ -444,13 +505,20 @@ def _parse_dependency_check(
                     "'name' or 'description'"
                 )
             vulnerability_count += 1
-            cvss = vuln.get("cvssv2") or {}
-            cvss_text = f"CVSS v2: {cvss.get('score')}" if cvss.get("score") is not None else ""
+            cvss = vuln.get("cvssv3") or vuln.get("cvssv2") or {}
+            cvss_score = cvss.get("baseScore") if cvss.get("baseScore") is not None else cvss.get("score")
+            cvss_vector = cvss.get("vectorString") or cvss.get("vector")
+            cvss_label = "CVSS v3" if vuln.get("cvssv3") else "CVSS v2"
+            cvss_text = f"{cvss_label}: {cvss_score}" if cvss_score is not None else ""
             description = str(vuln["description"] or f"{vuln['name']} reported by {vuln.get('source', 'Dependency-Check')}")
             if cvss_text:
                 description = f"{description} ({cvss_text})"
             kev = normalize_kev(vuln)
             identity = normalize_cpe_identity(package_name, package_version, vuln)
+            source_status = (
+                vuln.get("analysis", {}).get("state")
+                if isinstance(vuln.get("analysis"), dict) else vuln.get("status")
+            )
             out.append(RawFinding(
                 tool="dependency-check",
                 rule_id=str(vuln["name"]),
@@ -472,44 +540,173 @@ def _parse_dependency_check(
                     "cpe_identity": identity,
                     "dependency": dependency_context,
                     "dependency_vulnerability_count": len(vulnerabilities),
+                    "cvss_score": cvss_score,
+                    "cvss_vector": cvss_vector,
+                    "references": vuln.get("references") or [],
+                    "severity_original": vuln.get("severity"),
+                    "source_status": source_status,
                     "record": vuln,
                 },
+                source_format="dependency-check", source_record_id=str(vuln["name"]),
+                cve=str(vuln["name"]) if str(vuln["name"]).upper().startswith("CVE-") else None,
+                cvss_score=float(cvss_score) if isinstance(cvss_score, (int, float)) else None,
+                cvss_vector=str(cvss_vector) if cvss_vector else None,
+                package=package_name, installed_version=package_version,
+                references=vuln.get("references") or [],
+                source_status=source_status,
             ))
     return out, vulnerability_count
 
 
 def parse_report(
     path: str | Path, input_format: str = "auto", source_dir: str | None = None,
+    mapping: dict[str, Any] | None = None, no_schema_ai: bool = False,
 ) -> ImportedReport:
     report_path = Path(path).expanduser().resolve()
     if not report_path.is_file():
         raise ImportErrorValue(f"input report not found: {path}")
     try:
+        if report_path.stat().st_size > 100 * 1024 * 1024:
+            raise ImportErrorValue("input report exceeds the 100 MiB safety limit")
+    except OSError as exc:
+        raise ImportErrorValue(f"could not stat JSON input report {path}: {exc}") from exc
+    try:
         payload = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ImportErrorValue(f"could not read JSON input report {path}: {exc}") from exc
-    payload = _as_dict(payload, f"input report {path}")
-    actual = detect_format(payload)
-    detected = actual if input_format == "auto" else input_format
-    if detected not in SUPPORTED_FORMATS:
-        raise ImportErrorValue(f"unsupported input format: {detected}")
-    if actual != detected:
-        raise ImportErrorValue(
-            f"input format {detected} does not match detected format {actual} for {path}"
-        )
-    if detected == "sonarqube":
-        findings, records, skipped = _parse_sonarqube(payload, source_dir)
+    _bounded_json(payload)
+    report_sha256 = _sha256(report_path)
+    detected_known: str | None = None
+    try:
+        detected_known = registry_detect_format(payload)
+    except ValueError as exc:
+        raise ImportErrorValue(str(exc)) from exc
+    requested = input_format
+    if requested == "auto":
+        detected = detected_known or "generic-json"
     else:
+        detected = requested
+        if detected not in SUPPORTED_FORMATS:
+            raise ImportErrorValue(f"unsupported input format: {detected}")
+        if detected_known and detected != detected_known:
+            raise ImportErrorValue(
+                f"input format {detected} does not match detected format {detected_known} for {path}"
+            )
+        if not detected_known and detected != "generic-json":
+            raise ImportErrorValue(
+                f"input format {detected} does not match detected format unknown-json for {path}"
+            )
+    skipped: list[dict[str, Any]] = []
+    mapping_spec: dict[str, Any] | None = None
+    mapping_source = "known_adapter"
+    mapping_stats: dict[str, Any] | None = None
+    if detected == "sonarqube":
+        payload = _as_dict(payload, f"input report {path}")
+        findings, records, skipped = _parse_sonarqube(payload, source_dir)
+        accounting = RecordAccounting()
+        for index, issue in enumerate(payload.get("issues") or []):
+            state = "skipped" if isinstance(issue, dict) and str(issue.get("status", "OPEN")).upper() != "OPEN" else "mapped"
+            accounting.add(state, f"/issues/{index}", reason="source_status_not_open" if state == "skipped" else None)
+        accounting.validate()
+        mapping_stats = {"adapter": "sonarqube-issue-json", "confidence": 1.0}
+    elif detected == "dependency-check":
+        payload = _as_dict(payload, f"input report {path}")
         findings, records = _parse_dependency_check(payload, source_dir)
-        skipped = []
+        accounting = RecordAccounting()
+        for finding in findings:
+            pointer = (finding.raw.get("record_pointer") if finding.raw else None) or ""
+            accounting.add("mapped", pointer or "/dependencies")
+        accounting.validate()
+        mapping_stats = {"adapter": "dependency-check-reportSchema-1.1", "confidence": 1.0}
+    elif detected == "sarif":
+        try:
+            findings, accounting, mapping_stats = parse_sarif(payload, report_sha256=report_sha256, source_dir=source_dir)
+        except (TypeError, ValueError) as exc:
+            raise ImportErrorValue(str(exc)) from exc
+    elif detected == "cyclonedx":
+        try:
+            findings, accounting, mapping_stats = parse_cyclonedx(payload, report_sha256=report_sha256, source_dir=source_dir)
+        except (TypeError, ValueError) as exc:
+            raise ImportErrorValue(str(exc)) from exc
+    else:
+        try:
+            proposal = None
+            if mapping is not None:
+                mapping_spec = mapping
+                mapping_source = "user_supplied"
+            else:
+                deterministic = None
+                deterministic_error: MappingError | None = None
+                try:
+                    deterministic = infer_mapping(payload)
+                except MappingError as exc:
+                    deterministic_error = exc
+                if (
+                    deterministic is not None
+                    and deterministic.validation.confidence >= 0.55
+                ):
+                    mapping_spec = deterministic.mapping
+                    mapping_source = "deterministic"
+                elif not no_schema_ai and schema_ai_requested():
+                    # Deterministic inference is advisory here. A weak or
+                    # failed proposal must still be eligible for the explicit
+                    # schema-AI fallback; previously the exception escaped
+                    # before the provider could be called.
+                    proposal = propose_mapping_with_model(payload)
+                    mapping_spec = proposal.mapping
+                    mapping_source = proposal.source
+                elif deterministic_error is not None:
+                    raise deterministic_error
+                else:
+                    raise MappingError(
+                        "deterministic mapping confidence is below the safe threshold"
+                    )
+            findings, accounting, mapping_stats = apply_mapping(
+                payload, mapping_spec, report_sha256=report_sha256,
+                source_format="generic-json", source_context_available=bool(source_dir),
+                source_dir=source_dir,
+            )
+            if proposal:
+                mapping_stats.update({
+                    "provider": proposal.provider,
+                    "model_requested": proposal.model_requested,
+                    "model_actual": proposal.model_actual,
+                    "response": proposal.response,
+                })
+        except MappingError as exc:
+            if no_schema_ai or not schema_ai_requested():
+                reason = "schema AI disabled" if no_schema_ai else "schema AI not configured"
+                raise ImportErrorValue(
+                    f"generic JSON mapping failed ({reason}): {exc}; provide --mapping FILE"
+                ) from exc
+            raise ImportErrorValue(
+                f"generic JSON could not be safely mapped: {exc}; provide --mapping FILE"
+            ) from exc
+    accounting.validate()
+    if detected in {"sonarqube", "dependency-check"}:
+        _attach_legacy_provenance(
+            payload, findings, report_sha256=report_sha256,
+            source_format=detected, source_context_available=bool(source_dir),
+        )
+    # Attach report-level provenance to legacy first-class adapter records and
+    # make the exact nested pointer available to downstream exporters.
+    for finding in findings:
+        raw = finding.raw if isinstance(finding.raw, dict) else {}
+        raw.setdefault("report_sha256", report_sha256)
+        raw.setdefault("record_pointer", finding.record_pointer)
+        raw.setdefault("mapping_identity", mapping_stats.get("mapping_identity") if mapping_stats else detected)
+        raw.setdefault("source_context_available", bool(source_dir))
+        finding.raw = raw
     return ImportedReport(
-        str(report_path), detected, _sha256(report_path), records, tuple(findings),
-        tuple(skipped),
+        str(report_path), detected, report_sha256, accounting.total_records, tuple(findings),
+        tuple(skipped), accounting=accounting.as_dict(include_records=True), mapping=mapping_spec,
+        mapping_source=mapping_source, mapping_stats=mapping_stats,
     )
 
 
 def prepare_import(
     paths: list[str], input_format: str, source_dir: str | None,
+    mapping_path: str | None = None, no_schema_ai: bool = False,
 ) -> tuple[list[ImportedReport], dict[str, Any]]:
     if not paths:
         raise ImportErrorValue("at least one --input-file is required for import mode")
@@ -518,15 +715,31 @@ def prepare_import(
         raise ImportErrorValue("the same input report was supplied more than once")
     if source_dir and not Path(source_dir).is_dir():
         raise ImportErrorValue(f"source directory not found: {source_dir}")
-    reports = [parse_report(p, input_format=input_format, source_dir=source_dir) for p in resolved]
+    mapping = mapping_from_file(mapping_path) if mapping_path else None
+    reports = [
+        parse_report(
+            p, input_format=input_format, source_dir=source_dir,
+            mapping=mapping, no_schema_ai=no_schema_ai,
+        )
+        for p in resolved
+    ]
     metadata = {
         "import_mode": True,
         "import_format": input_format,
+        "schema_ai": not no_schema_ai,
+        "mapping_path": str(Path(mapping_path).expanduser().resolve()) if mapping_path else None,
+        "mapping_sha256": mapping_sha256(mapping) if mapping else None,
         "import_inputs": [
             {
                 "path": r.path, "format": r.format, "sha256": r.sha256,
                 "records": r.records, "findings": len(r.findings),
                 "skipped_records": len(r.skipped), "skipped": list(r.skipped),
+                "accounting": {
+                    key: value for key, value in (r.accounting or {}).items() if key != "records"
+                },
+                "mapping_source": r.mapping_source,
+                "mapping": r.mapping,
+                "mapping_stats": r.mapping_stats,
             }
             for r in reports
         ],
@@ -542,6 +755,51 @@ def persist_imported_findings(
     count = 0
     for report in reports:
         for rf in report.findings:
+            raw = dict(rf.raw or {})
+            raw.setdefault("import_format", rf.source_format or report.format)
+            raw.setdefault("report_sha256", rf.report_sha256 or report.sha256)
+            raw.setdefault("record_pointer", rf.record_pointer)
+            raw.setdefault("mapping_identity", rf.mapping_identity or report.mapping_source)
+            raw.setdefault("canonical", {
+                "source_tool": rf.tool,
+                "source_format": rf.source_format or report.format,
+                "source_record_id": rf.source_record_id,
+                "rule_id": rf.rule_id,
+                "cve": rf.cve,
+                "ghsa": rf.ghsa,
+                "advisory_id": rf.advisory_id,
+                "cwe": rf.cwe,
+                "original_severity": raw.get("severity_original") or (
+                    ((raw.get("provenance") or {}).get("fields") or {}).get("severity", {}).get("original")
+                    if isinstance((raw.get("provenance") or {}).get("fields"), dict) else None
+                ) or rf.severity,
+                "normalized_severity": rf.severity,
+                "cvss_score": rf.cvss_score,
+                "cvss_vector": rf.cvss_vector,
+                "title": rf.title,
+                "description": rf.description,
+                "file": rf.file,
+                "line_start": rf.line_start,
+                "line_end": rf.line_end,
+                "locations": rf.locations,
+                "package": rf.package or raw.get("package"),
+                "installed_version": rf.installed_version or raw.get("InstalledVersion"),
+                "ecosystem": rf.ecosystem or raw.get("ecosystem"),
+                "purl": rf.purl or raw.get("purl"),
+                "cpe": rf.cpe or raw.get("cpe"),
+                "dependency_path": rf.dependency_path,
+                "fixed_version": rf.fixed_version or raw.get("fixed_version"),
+                "references": rf.references,
+                "source_status": rf.source_status,
+            })
+            raw.setdefault("provenance", {
+                "report_sha256": rf.report_sha256 or report.sha256,
+                "record_pointer": rf.record_pointer,
+                "mapping_identity": rf.mapping_identity or report.mapping_source,
+                "fields": rf.field_provenance,
+                "evidence_basis": rf.evidence_basis,
+                "source_context_available": rf.source_context_available,
+            })
             finding = Finding(
                 job_id=job_id,
                 hash=stable_finding_hash(rf.file, rf.line_start, rf.rule_id, rf.snippet),
@@ -559,7 +817,7 @@ def persist_imported_findings(
                 cwe=rf.cwe,
                 owasp=rf.owasp,
                 recommendation=rf.recommendation,
-                raw_outputs={"raw": rf.raw},
+                raw_outputs={"raw": raw},
                 status="raw",
                 iteration=0,
             )

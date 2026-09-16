@@ -6,7 +6,7 @@ HELP_TOPICS: dict[str, str] = {
     "setup": """
 [bold cyan]Trident CLI setup[/bold cyan]
 
-1. Install the GitHub release wheel: [green]python -m pip install path/to/trident-0.1.0-py3-none-any.whl[/green]
+1. Install the GitHub release wheel: [green]python -m pip install path/to/trident-0.3.1-py3-none-any.whl[/green]
 2. Install tools: [green]trident install-tools --verify[/green]
 3. Configure Ollama, OpenAI, or Anthropic with the config commands.
 4. Scan a local path: [green]trident scan .[/green]
@@ -39,7 +39,7 @@ Exit codes:
   0 = clean, 1 = confirmed findings at or above the gate, 2 = scan error
 
 Install the package and scanner tools, then write machine-readable output:
-  [green]python -m pip install path/to/trident-0.1.0-py3-none-any.whl
+  [green]python -m pip install path/to/trident-0.3.1-py3-none-any.whl
   trident install-tools
   trident scan . --format sarif --output-file trident.sarif --quiet[/green]
 
@@ -81,6 +81,12 @@ Examples:
 
 Use quiet mode when stdout or an output stream must contain only the selected
 machine-readable format.
+
+Import standardized or heterogeneous JSON without running scanners:
+  [green]trident inspect report.json --format json
+  trident scan --input-file report.json --format json[/green]
+Use [green]--mapping FILE[/green] for an explicit trident-json-mapping-v1
+mapping and [green]--no-schema-ai[/green] to keep schema inference deterministic.
 """,
 "guards": """
 [bold cyan]Triage adjustment mechanisms[/bold cyan]

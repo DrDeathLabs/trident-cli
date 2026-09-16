@@ -8,8 +8,8 @@ trident scan . --format json     # full machine-readable output
 trident scan . --format sarif    # SARIF 2.1.0 for GitHub Code Scanning
 ```
 
-The same output formats are available for imported SonarQube and
-Dependency-Check reports. Import mode replaces scanner execution but preserves
+The same output formats are available for imported SonarQube, Dependency-Check,
+SARIF, CycloneDX, and mapped heterogeneous JSON reports. Import mode replaces scanner execution but preserves
 the downstream review, triage, sidecar, and exit-code behavior:
 
 ```bash
@@ -89,7 +89,10 @@ trident scan . --format json > results.json
 ```json
 {
   "job": { ... },
-  "import": { ... },
+  "import": {
+    "inputs": [{"format": "generic-json", "records": 10,
+      "accounting": {"total_records": 10, "unexplained": 0}}]
+  },
   "findings": [ ... ],
   "remediation_actions": [ ... ],
   "attack_chains": [ ... ],
@@ -197,8 +200,8 @@ included in the retained finding queues.
 | `chain_priority_suppressed_reason` | string or null | - | Why high-tier report-derived elevation was blocked |
 | `kev_floor` | string or null | - | Exact identity-matched KEV floor explanation |
 
-For imported findings, `evidence.import.record` is the original SonarQube
-issue or Dependency-Check vulnerability record. Dependency-Check evidence also
+For imported findings, `evidence.import.record` is the original source record.
+The evidence package also
 includes the package, installed version, parent dependency context, and
 vulnerable software match when present. `evidence.import_metadata.kev` and
 `evidence.import_metadata.identity` expose normalized KEV and package/CPE

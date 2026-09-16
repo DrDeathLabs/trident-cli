@@ -28,15 +28,35 @@ _ledger_lock = threading.Lock()
 _ledger_factory = None
 
 
+def _default_ledger_path() -> str | None:
+    """Return the durable LLM-ledger database path.
+
+    SQLite scan transactions can remain open while Council workers are waiting
+    on Ollama. Keeping the request ledger in that same database makes the
+    workers contend with the scan transaction and can turn otherwise healthy
+    model calls into ``database is locked`` failures. Use an explicit path when
+    supplied; otherwise give SQLite a sidecar ledger while leaving Postgres on
+    the shared database.
+    """
+    configured = os.environ.get("TRIDENT_LLM_LEDGER_PATH")
+    if configured:
+        return configured
+    if settings.db.backend == "sqlite":
+        return str(settings.db.sqlite_path.with_name(
+            f"{settings.db.sqlite_path.name}.llm-ledger.sqlite"
+        ))
+    return None
+
+
 def _ledger_session_factory():
-    """Use a dedicated SQLite ledger when configured to avoid scan write locks."""
+    """Use a dedicated SQLite ledger to avoid scan write locks."""
     global _ledger_factory
     if _ledger_factory is not None:
         return _ledger_factory
     with _ledger_lock:
         if _ledger_factory is not None:
             return _ledger_factory
-        ledger_path = os.environ.get("TRIDENT_LLM_LEDGER_PATH")
+        ledger_path = _default_ledger_path()
         if ledger_path:
             from sqlalchemy import create_engine, event
             from sqlalchemy.orm import sessionmaker

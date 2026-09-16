@@ -79,12 +79,29 @@ def run_scan(job: Job, db: Session) -> None:
                 report = parse_report(
                     item["path"], input_format=item.get("format", "auto"),
                     source_dir=profile.get("source_context"),
+                    mapping=item.get("mapping"),
+                    no_schema_ai=not bool(profile.get("schema_ai", True)),
                 )
                 expected_hash = item.get("sha256")
                 if expected_hash and report.sha256 != expected_hash:
                     raise ValueError(
                         f"input report changed after validation: {report.path}"
                     )
+                expected_accounting = item.get("accounting")
+                if expected_accounting and report.accounting:
+                    actual = {
+                        key: report.accounting.get(key, 0)
+                        for key in ("total_records", "mapped", "partially_mapped", "out_of_scope", "skipped", "malformed", "unsupported")
+                    }
+                    expected = {
+                        key: expected_accounting.get(key, 0)
+                        for key in actual
+                    }
+                    if actual != expected:
+                        raise ValueError(
+                            f"input accounting changed after validation: {report.path}; "
+                            f"expected {expected}, got {actual}"
+                        )
                 reports.append(report)
             publish_event(db, job_id, EventType.SCAN_IMPORT_START, {
                 "files": [r.path for r in reports],
