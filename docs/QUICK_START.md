@@ -75,7 +75,7 @@ Trident works with Ollama (local), OpenAI, or Anthropic. For this quick start, O
 Pull a model if you have not already:
 
 ```bash
-ollama pull gemma4:31b-cloud
+ollama pull nemotron-3-super:cloud
 ```
 
 Configure Trident:
@@ -83,7 +83,7 @@ Configure Trident:
 ```bash
 trident config set llm.backend ollama
 trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model gemma4:31b-cloud
+trident config set llm.expert_model nemotron-3-super:cloud
 ```
 
 Confirm:

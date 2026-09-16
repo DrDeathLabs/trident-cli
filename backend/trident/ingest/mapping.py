@@ -192,19 +192,19 @@ def _text(value: Any) -> str:
 
 def normalize_severity(value: Any, *, cvss_score: Any = None) -> tuple[str, str]:
     """Return normalized severity and an auditable deterministic basis."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
-        if 0 <= number <= 10:
-            return (
-                "critical" if number >= 9 else "high" if number >= 7 else
-                "medium" if number >= 4 else "low" if number > 0 else "info",
-                "numeric_cvss_like_score",
-            )
     text = _text(value).lower()
     if text in _SEVERITY_ALIASES:
         return _SEVERITY_ALIASES[text], f"text_alias:{text}"
     if cvss_score is not None and isinstance(cvss_score, (int, float)):
-        return normalize_severity(cvss_score)
+        number = float(cvss_score)
+        if 0 <= number <= 10:
+            return (
+                "critical" if number >= 9 else "high" if number >= 7 else
+                "medium" if number >= 4 else "low" if number > 0 else "info",
+                "cvss_score_semantics",
+            )
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return "info", "numeric_without_cvss_semantics"
     return "info", "unrecognized_or_missing_default_info"
 
 

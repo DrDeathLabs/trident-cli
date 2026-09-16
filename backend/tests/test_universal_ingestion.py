@@ -8,9 +8,12 @@ from click.testing import CliRunner
 from trident.cli import cli
 from trident.ingest.contracts import MAPPING_VERSION
 from trident.ingest.importers import parse_report
-from trident.ingest.mapping import MappingError, select
-from trident.ingest.inference import propose_mapping_with_model
+from trident.ingest.mapping import MappingError, normalize_severity, select
+from trident.ingest.inference import MappingProposal, propose_mapping_with_model
+from trident.ingest.contracts import MappingValidation
 from trident.llm.base import LLMResponse
+from trident.reliability.structured import _default_ledger_path
+from trident.config import settings
 
 
 def _write(path, value):
@@ -65,9 +68,21 @@ def test_explicit_mapping_is_replayable_and_strict(tmp_path):
     second = parse_report(report_path, mapping=mapping)
     assert first.mapping == second.mapping
     assert first.findings[0].rule_id == "TH-1"
-    assert first.findings[0].severity == "high"
+    assert first.findings[0].severity == "info"
+    assert first.findings[0].raw["provenance"]["fields"]["severity"]["original"] == 8
+    assert first.findings[0].raw["severity_normalization"] == "numeric_without_cvss_semantics"
     assert first.findings[0].raw["mapping_sha256"] == second.findings[0].raw["mapping_sha256"]
     assert parse_report(report_path, mapping=json.loads(mapping_path.read_text())).accounting == first.accounting
+
+
+def test_arbitrary_numeric_severity_is_not_assumed_to_be_cvss():
+    normalized, basis = normalize_severity(8)
+    assert normalized == "info"
+    assert basis == "numeric_without_cvss_semantics"
+
+    normalized, basis = normalize_severity("vendor-risk", cvss_score=8)
+    assert normalized == "high"
+    assert basis == "cvss_score_semantics"
 
 
 def test_unknown_vendor_schema_fails_closed_without_explicit_mapping(tmp_path):
@@ -167,3 +182,72 @@ def test_model_may_propose_mapping_but_deterministic_validation_executes_it():
     assert proposal.model_requested == "requested-model"
     assert proposal.model_actual == "test-model-v2"
     assert proposal.mapping["fields"]["rule_id"] == "$.threatCode"
+
+
+def test_model_mapping_repairs_a_non_mapping_response():
+    payload = {"alerts": [{"threatCode": "TH-1", "headline": "Parser issue", "riskBand": "high"}]}
+    mapping = {
+        "mapping_version": MAPPING_VERSION,
+        "name": "repair-proposal",
+        "records": "$.alerts[*]",
+        "tool": {"literal": "repair-scanner"},
+        "fields": {"rule_id": "$.threatCode", "title": "$.headline", "severity": "$.riskBand"},
+    }
+
+    class RepairBackend:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, *, model, temperature=0.0, **kwargs):
+            self.calls += 1
+            content = json.dumps({"candidate_collections": ["$.alerts[*]"]}) if self.calls == 1 else json.dumps(mapping)
+            return LLMResponse(
+                content=content,
+                metadata={"backend": "ollama", "model_actual": "nemotron-3-super"},
+            )
+
+    backend = RepairBackend()
+    proposal = propose_mapping_with_model(payload, backend=backend, model="nemotron-3-super:cloud")
+    assert backend.calls == 2
+    assert len(proposal.response["attempts"]) == 2
+    assert proposal.mapping["records"] == "$.alerts[*]"
+
+
+def test_schema_ai_is_called_when_deterministic_inference_fails(monkeypatch, tmp_path):
+    payload = {"threats": [{
+        "threatCode": "TH-1", "headline": "Parser issue", "riskBand": "urgent",
+    }]}
+    path = _write(tmp_path / "unfamiliar.json", payload)
+    mapping = {
+        "mapping_version": MAPPING_VERSION,
+        "name": "ai-holdout",
+        "records": "$.threats[*]",
+        "tool": {"literal": "ai-scanner"},
+        "fields": {
+            "rule_id": "$.threatCode", "title": "$.headline", "severity": "$.riskBand",
+        },
+    }
+    proposal = MappingProposal(
+        mapping=mapping, source="model_proposed",
+        validation=MappingValidation(
+            records_inspected=1, coverage={"rule_id": 1.0, "title": 1.0, "severity": 1.0},
+            required_field_coverage=1.0, type_consistency=1.0, identifier_rate=1.0,
+            confidence=1.0,
+        ),
+        provider="ollama", model_requested="nemotron-3-super:cloud",
+        model_actual="nemotron-3-super",
+        response={"content": json.dumps(mapping), "metadata": {"model_actual": "nemotron-3-super"}},
+    )
+    monkeypatch.setenv("TRIDENT_SCHEMA_AI", "1")
+    monkeypatch.setattr("trident.ingest.importers.propose_mapping_with_model", lambda payload: proposal)
+    report = parse_report(path)
+    assert report.mapping_source == "model_proposed"
+    assert report.findings[0].rule_id == "TH-1"
+    assert report.findings[0].raw["provenance"]["fields"]["rule_id"]["pointer"] == "/threats/0/threatCode"
+
+
+def test_sqlite_llm_ledger_defaults_to_a_sidecar(monkeypatch, tmp_path):
+    monkeypatch.delenv("TRIDENT_LLM_LEDGER_PATH", raising=False)
+    monkeypatch.setattr(settings.db, "backend", "sqlite")
+    monkeypatch.setattr(settings.db, "sqlite_path", tmp_path / "scan.sqlite")
+    assert _default_ledger_path() == str(tmp_path / "scan.sqlite.llm-ledger.sqlite")

@@ -14,6 +14,35 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Mixed-format import support through the existing correlation, Council, judge,
   attack-chain, guard, triage, and reporting pipeline.
 
+## [0.2.1] - 2026-09-14
+
+### Maintenance
+
+- Removed generated release audit artifacts from the public source tree.
+- Normalized development path examples.
+- Expanded repository hygiene protections for generated release evidence.
+
+## [0.2.0] - 2026-09-13
+
+### Added
+
+- External SonarQube JSON and OWASP Dependency-Check JSON ingestion.
+- Repeatable JSON input files for one import job where supported by the CLI.
+- User-facing validation and replay commands for frozen scanner and typed
+  decision evidence.
+- Rich relationship metadata for confirmed, false-positive, duplicate,
+  related, and unresolved records.
+- Ollama Cloud model identity compatibility for exact native cloud aliases.
+
+### Changed
+
+- Correlation distinguishes exact duplicates from related evidence.
+- Scanner severity is preserved separately from model assessment, guard
+  adjustment, and final P0-P4 priority.
+- Malformed, unresolved, timed-out, or failed model decisions remain unresolved
+  and fail closed.
+- JSON import preserves source report evidence and bypasses scanner subprocesses.
+
 ## [0.1.0] - Initial public CLI release
 
 ### Added

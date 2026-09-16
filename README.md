@@ -156,7 +156,7 @@ Configure a review backend, then scan an authorized source tree:
 ```bash
 trident config set llm.backend ollama
 trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model gemma4:31b-cloud
+trident config set llm.expert_model nemotron-3-super:cloud
 trident scan /path/to/source
 ```
 

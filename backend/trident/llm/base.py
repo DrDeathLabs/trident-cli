@@ -1,7 +1,7 @@
 """LLM backend abstraction.
 
 Single Ollama backend. The council model is configurable (default
-gemma4:31b-cloud) with optional per-role and per-job overrides. There is no
+nemotron-3-super:cloud) with optional per-role and per-job overrides. There is no
 fallback model: if the configured model is unreachable, the job fails clearly.
 """
 

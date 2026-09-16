@@ -121,7 +121,7 @@ Ollama is the default backend:
 ~~~bash
 trident config set llm.backend ollama
 trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model gemma4:31b-cloud
+trident config set llm.expert_model nemotron-3-super:cloud
 ~~~
 
 See [LLM_BACKENDS](LLM_BACKENDS.md) for cloud backend setup and data-handling

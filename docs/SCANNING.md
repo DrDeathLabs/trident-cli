@@ -115,7 +115,7 @@ trident scan . --fail-on P2
 ## LLM overrides
 
 ~~~bash
-trident scan . --backend ollama --model gemma4:31b-cloud
+trident scan . --backend ollama --model nemotron-3-super:cloud
 trident scan . --backend openai --model gpt-4o
 trident scan . --backend anthropic --model claude-sonnet-5
 ~~~

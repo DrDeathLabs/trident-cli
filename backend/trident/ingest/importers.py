@@ -630,15 +630,37 @@ def parse_report(
             raise ImportErrorValue(str(exc)) from exc
     else:
         try:
-            mapping_spec = mapping or infer_mapping(payload).mapping
-            mapping_source = "user_supplied" if mapping is not None else "deterministic"
             proposal = None
-            if mapping is None and not no_schema_ai and schema_ai_requested():
-                deterministic = infer_mapping(payload)
-                if deterministic.validation.confidence < 0.55:
+            if mapping is not None:
+                mapping_spec = mapping
+                mapping_source = "user_supplied"
+            else:
+                deterministic = None
+                deterministic_error: MappingError | None = None
+                try:
+                    deterministic = infer_mapping(payload)
+                except MappingError as exc:
+                    deterministic_error = exc
+                if (
+                    deterministic is not None
+                    and deterministic.validation.confidence >= 0.55
+                ):
+                    mapping_spec = deterministic.mapping
+                    mapping_source = "deterministic"
+                elif not no_schema_ai and schema_ai_requested():
+                    # Deterministic inference is advisory here. A weak or
+                    # failed proposal must still be eligible for the explicit
+                    # schema-AI fallback; previously the exception escaped
+                    # before the provider could be called.
                     proposal = propose_mapping_with_model(payload)
                     mapping_spec = proposal.mapping
                     mapping_source = proposal.source
+                elif deterministic_error is not None:
+                    raise deterministic_error
+                else:
+                    raise MappingError(
+                        "deterministic mapping confidence is below the safe threshold"
+                    )
             findings, accounting, mapping_stats = apply_mapping(
                 payload, mapping_spec, report_sha256=report_sha256,
                 source_format="generic-json", source_context_available=bool(source_dir),
