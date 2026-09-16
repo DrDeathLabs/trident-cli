@@ -16,7 +16,7 @@ install every scanner binary.
 ### From a GitHub release artifact
 
 ~~~bash
-python -m pip install path/to/trident-0.3.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.1-py3-none-any.whl
 ~~~
 
 Download the wheel from the GitHub release, then install that local file.

@@ -50,7 +50,7 @@ This table describes the current standalone CLI capabilities.
 | SonarQube JSON import | Supported | Use `--input-file`; native scanner subprocesses are bypassed |
 | OWASP Dependency-Check JSON import | Supported | Requires `reportSchema: 1.1` |
 | Multiple supported JSON inputs | Supported | Repeat `--input-file` for one import job |
-| Arbitrary JSON conversion | Unsupported | Unknown schemas are rejected rather than guessed |
+| Heterogeneous vulnerability JSON mapping | Supported with bounds | Deterministic inference, optional validated schema-AI proposals, or explicit `trident-json-mapping-v1`; ambiguous/non-security JSON fails closed |
 
 ## LLM backends
 

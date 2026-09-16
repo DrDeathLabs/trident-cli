@@ -513,13 +513,13 @@ def _parse_dependency_check(
             description = str(vuln["description"] or f"{vuln['name']} reported by {vuln.get('source', 'Dependency-Check')}")
             if cvss_text:
                 description = f"{description} ({cvss_text})"
-                kev = normalize_kev(vuln)
-                identity = normalize_cpe_identity(package_name, package_version, vuln)
-                source_status = (
-                    vuln.get("analysis", {}).get("state")
-                    if isinstance(vuln.get("analysis"), dict) else vuln.get("status")
-                )
-                out.append(RawFinding(
+            kev = normalize_kev(vuln)
+            identity = normalize_cpe_identity(package_name, package_version, vuln)
+            source_status = (
+                vuln.get("analysis", {}).get("state")
+                if isinstance(vuln.get("analysis"), dict) else vuln.get("status")
+            )
+            out.append(RawFinding(
                 tool="dependency-check",
                 rule_id=str(vuln["name"]),
                 severity=_severity(vuln.get("severity")),
@@ -553,7 +553,7 @@ def _parse_dependency_check(
                 cvss_vector=str(cvss_vector) if cvss_vector else None,
                 package=package_name, installed_version=package_version,
                 references=vuln.get("references") or [],
-                    source_status=source_status,
+                source_status=source_status,
             ))
     return out, vulnerability_count
 

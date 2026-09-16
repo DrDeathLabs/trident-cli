@@ -6,7 +6,7 @@ HELP_TOPICS: dict[str, str] = {
     "setup": """
 [bold cyan]Trident CLI setup[/bold cyan]
 
-1. Install the GitHub release wheel: [green]python -m pip install path/to/trident-0.3.0-py3-none-any.whl[/green]
+1. Install the GitHub release wheel: [green]python -m pip install path/to/trident-0.3.1-py3-none-any.whl[/green]
 2. Install tools: [green]trident install-tools --verify[/green]
 3. Configure Ollama, OpenAI, or Anthropic with the config commands.
 4. Scan a local path: [green]trident scan .[/green]
@@ -39,7 +39,7 @@ Exit codes:
   0 = clean, 1 = confirmed findings at or above the gate, 2 = scan error
 
 Install the package and scanner tools, then write machine-readable output:
-  [green]python -m pip install path/to/trident-0.3.0-py3-none-any.whl
+  [green]python -m pip install path/to/trident-0.3.1-py3-none-any.whl
   trident install-tools
   trident scan . --format sarif --output-file trident.sarif --quiet[/green]
 

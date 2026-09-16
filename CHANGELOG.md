@@ -3,6 +3,18 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.1] - 2026-09-15
+
+### Fixed
+
+- Keep valid Dependency-Check vulnerability records when CVSS data is absent;
+  original severity and other report evidence remain preserved.
+- Improved live Ollama import reliability with an isolated SQLite LLM ledger,
+  validated schema-AI mapping fallback, and deterministic numeric-severity
+  handling.
+- Corrected public documentation for heterogeneous JSON mapping and the
+  default `nemotron-3-super:cloud` model.
+
 ## [0.3.0] - 2026-09-15
 
 ### Added

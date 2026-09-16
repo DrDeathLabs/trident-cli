@@ -121,6 +121,19 @@ def test_dependency_without_vulnerabilities_is_not_a_finding(tmp_path):
     assert len(report.findings) == 1
 
 
+def test_dependency_vulnerability_without_cvss_is_still_imported(tmp_path):
+    payload = _dependency_report()
+    vulnerability = payload["dependencies"][0]["vulnerabilities"][0]
+    vulnerability.pop("cvssv2")
+    vulnerability["severity"] = "LOW"
+    path = _write(tmp_path / "dependency-check-no-cvss.json", payload)
+    report = parse_report(path)
+    assert report.records == 1
+    assert len(report.findings) == 1
+    assert report.findings[0].rule_id == "CVE-2024-0001"
+    assert "CVSS" not in report.findings[0].description
+
+
 def test_sonarqube_import_filters_closed_and_maps_fields(tmp_path):
     path = _write(tmp_path / "sonar.json", _sonar_report(_sonar_issue(), _sonar_issue("CLOSED")))
     report = parse_report(path)

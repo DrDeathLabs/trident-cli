@@ -139,7 +139,7 @@ source .venv/bin/activate
 # .venv\Scripts\Activate.ps1
 
 # Install the wheel downloaded from the GitHub release:
-python -m pip install path/to/trident-0.3.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.1-py3-none-any.whl
 trident --version
 trident install-tools --verify --warmup
 ```
