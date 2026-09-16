@@ -63,22 +63,11 @@ Trident analyzes source and configuration files. It does not:
 - Treat compiled or packaged artifacts as source unless a scanner explicitly
   supports that input
 
-External JSON import supports SonarQube issue JSON, OWASP Dependency-Check
-`reportSchema: 1.1` JSON, SARIF 2.1.0, CycloneDX vulnerability JSON, and
-heterogeneous security JSON through safe deterministic or explicit mappings.
-Imported report metadata alone does not establish source exploitability; without
-`--source-dir`, reachability stays `unknown`. In import mode native scanner
-subprocesses are bypassed, so coverage is limited to the supplied reports unless
-source context and optional novel discovery are explicitly enabled.
+External JSON import currently supports SonarQube issue JSON and OWASP
+Dependency-Check `reportSchema: 1.1` JSON. Imported report metadata alone does
+not establish source exploitability; without `--source-dir`, reachability stays
+`unknown`. In import mode native scanner subprocesses are bypassed, so coverage
+is limited to the supplied reports unless source context and optional novel
+discovery are explicitly enabled.
 
 Only scan code you own or are authorized to analyze.
-
-## Imported JSON evidence
-
-Import supports standardized and heterogeneous software-security JSON, not
-literal arbitrary JSON. Unknown schemas require a sufficiently reliable
-deterministic mapping or an explicit `trident-json-mapping-v1` file. Ambiguous,
-weakly evidenced, malformed, and non-security records are accounted for and
-are not fabricated into findings. Report-only imports cannot establish source
-reachability or exploitability; supply `--source-dir` for optional code
-context.

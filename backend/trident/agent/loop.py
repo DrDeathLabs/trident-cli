@@ -1,6 +1,7 @@
 """The expert agent loop: explore with tools, then commit to a structured verdict.
 
-Flow (native Ollama tool-calling, supported by the configured council model):
+Flow (native OpenAI tool-calling, supported by the council models — verified on
+gemma4:31b-cloud, gpt-oss:120b-cloud, and glm-5.2:cloud):
   1. The model is given the finding/task and the workspace tool schemas.
   2. While it emits tool_calls (and the step budget allows), we dispatch each
      call, feed the result back, and let it keep exploring.
