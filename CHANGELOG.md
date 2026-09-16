@@ -3,29 +3,6 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.3.1] - 2026-09-15
-
-### Fixed
-
-- Keep valid Dependency-Check vulnerability records when CVSS data is absent;
-  original severity and other report evidence remain preserved.
-- Improved live Ollama import reliability with an isolated SQLite LLM ledger,
-  validated schema-AI mapping fallback, and deterministic numeric-severity
-  handling.
-- Corrected public documentation for heterogeneous JSON mapping and the
-  default `nemotron-3-super:cloud` model.
-
-## [0.3.0] - 2026-09-15
-
-### Added
-
-- Deterministic vulnerability evidence adapters for SARIF 2.1.0 and CycloneDX
-  vulnerability JSON alongside SonarQube and Dependency-Check imports.
-- Safe versioned generic JSON mappings, bounded structural inference, `trident
-  inspect`, field-level provenance, report hashes, and complete record accounting.
-- Mixed-format import support through the existing correlation, Council, judge,
-  attack-chain, guard, triage, and reporting pipeline.
-
 ## [0.2.1] - 2026-09-14
 
 ### Maintenance
@@ -44,16 +21,24 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   decision evidence.
 - Rich relationship metadata for confirmed, false-positive, duplicate,
   related, and unresolved records.
-- Ollama Cloud model identity compatibility for exact native cloud aliases.
+- Ollama Cloud model identity compatibility for cloud aliases that return their
+  exact native model name.
 
 ### Changed
 
-- Correlation distinguishes exact duplicates from related evidence.
+- Correlation distinguishes exact duplicates from related evidence instead of
+  representing every grouped record as a duplicate.
 - Scanner severity is preserved separately from model assessment, guard
   adjustment, and final P0-P4 priority.
-- Malformed, unresolved, timed-out, or failed model decisions remain unresolved
-  and fail closed.
-- JSON import preserves source report evidence and bypasses scanner subprocesses.
+- Malformed, unresolved, timed-out, or failed model decisions remain
+  unresolved and fail closed; they are never converted into security verdicts.
+- JSON import preserves source report evidence and bypasses scanner
+  subprocesses.
+
+### Validation
+
+- Completed public validation results are summarized in
+  [docs/VALIDATION.md](docs/VALIDATION.md).
 
 ## [0.1.0] - Initial public CLI release
 

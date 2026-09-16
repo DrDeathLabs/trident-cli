@@ -17,7 +17,7 @@ gateway or an Ollama Cloud-tagged model through the same native API.
 2. Pull a model:
 
 ```bash
-ollama pull nemotron-3-super:cloud  # default council model
+ollama pull gemma4:31b-cloud        # recommended - default council model
 # ollama pull glm-5.2:cloud         # stronger for agentic mode
 ollama pull qwen3-embedding:0.6b    # required for semantic deduplication
 ```
@@ -26,10 +26,10 @@ ollama pull qwen3-embedding:0.6b    # required for semantic deduplication
 
 ```bash
 TRIDENT_LLM_BACKEND=ollama TRIDENT_OLLAMA_HOST=http://localhost:11434 \
-EXPERT_MODEL=nemotron-3-super:cloud trident scan .
+EXPERT_MODEL=gemma4:31b-cloud trident scan .
 ```
 
-The CLI also accepts `trident scan . --backend ollama --model nemotron-3-super:cloud`.
+The CLI also accepts `trident scan . --backend ollama --model gemma4:31b-cloud`.
 Use `trident config show` to inspect persisted configuration values and
 `trident config set` for configuration-manager settings such as the severity
 gate and iteration limit.
@@ -43,7 +43,7 @@ the simplest way to use an Ollama account with cloud-tagged models.
 
 | Use case | Recommended model |
 |----------|------------------|
-| Default scans | `nemotron-3-super:cloud` |
+| Default scans | `gemma4:31b-cloud` |
 | Agentic mode (deeper analysis) | `glm-5.2:cloud` |
 | Faster / smaller footprint | `gemma3:12b` or `qwen2.5:14b` |
 | Semantic deduplication | `qwen3-embedding:0.6b` |

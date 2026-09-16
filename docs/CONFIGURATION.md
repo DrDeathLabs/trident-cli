@@ -121,7 +121,6 @@ These variables are not in the config file but can be set as environment variabl
 | `MIN_NEW_FINDINGS` | `2` | Convergence threshold: stop iterating if fewer than this many new confirmed findings |
 | `AGENT_MAX_STEPS` | `6` | Maximum tool-call steps per expert in agentic mode |
 | `TRIDENT_SQLITE_PATH` | _(platform default)_ | Custom SQLite database path |
-| `TRIDENT_LLM_LEDGER_PATH` | `<sqlite path>.llm-ledger.sqlite` for SQLite | Custom durable LLM request ledger path. SQLite uses an isolated sidecar by default to avoid scan/Council write contention |
 | `TRIDENT_WORKSPACES` | _(platform default)_ | Directory where scan workspace files are stored |
 | `TRIDENT_TOOLS_DIR` | _(platform default)_ | Directory for managed scanner binaries |
 | `WORKSPACE_RETENTION_DAYS` | `14` | Days before workspace files are cleaned up |
