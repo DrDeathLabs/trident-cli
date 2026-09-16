@@ -31,6 +31,10 @@ _KNOWN_FIELDS = {
 }
 _IMPORTANT_FIELDS = ("rule_id", "title", "description", "severity", "cwe", "cve", "package", "file")
 _IDENTIFIER_RE = re.compile(r"\b(?:CVE-\d{4}-\d{4,}|GHSA-[0-9A-Za-z-]+|OSV-[0-9A-Za-z-]+|CWE[-_: ]?\d+)\b", re.I)
+_CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$", re.I)
+_GHSA_RE = re.compile(r"^GHSA-[0-9A-Za-z]{4}(?:-[0-9A-Za-z]{4}){2}$", re.I)
+_CWE_RE = re.compile(r"^CWE-\d+$", re.I)
+_PROVIDER_VALUES = {"ghsa", "nvd", "osv", "redhat", "ubuntu", "amazon", "oracle-oval"}
 _SEVERITY_ALIASES = {
     "critical": "critical", "blocker": "critical", "fatal": "critical",
     "high": "high", "error": "high", "major": "high", "severe": "high",
@@ -190,6 +194,118 @@ def _text(value: Any) -> str:
     return ""
 
 
+def _path_tokens(selector: str) -> list[str]:
+    """Return lowercase selector tokens for semantic context checks."""
+    try:
+        return [str(token).lower() for token in _parse_selector(selector) if token != "*"]
+    except MappingError:
+        return []
+
+
+def _identifier_value(value: Any, kind: str) -> str | None:
+    text = _text(value)
+    if not text:
+        return None
+    pattern = {"cve": _CVE_RE, "ghsa": _GHSA_RE, "cwe": _CWE_RE}.get(kind)
+    if pattern is None:
+        return text
+    # Lists and descriptive strings may contain several identifiers.  A
+    # canonical field is accepted only when the requested identifier class is
+    # present; another class must never be silently relabeled.
+    if isinstance(value, list) or " " in text or ";" in text:
+        candidates = re.findall(r"(?:CVE-\d{4}-\d{4,}|GHSA-[0-9A-Za-z-]+|CWE[-_: ]?\d+)", text, re.I)
+        for candidate in candidates:
+            normalized = candidate.upper().replace("_", "-").replace(":", "-")
+            if kind == "cwe" and normalized.startswith("CWE "):
+                normalized = normalized.replace("CWE ", "CWE-")
+            if pattern.fullmatch(normalized):
+                return normalized
+        return None
+    normalized = text.upper().replace("_", "-").replace(":", "-")
+    if kind == "cwe" and normalized.startswith("CWE "):
+        normalized = normalized.replace("CWE ", "CWE-")
+    return normalized if pattern.fullmatch(normalized) else None
+
+
+def _semantic_field_valid(field: str, value: Any, selector: str = "") -> bool:
+    """Validate canonical meaning, not only JSON shape or field coverage."""
+    if value in (None, "", [], {}):
+        return True
+    tokens = _path_tokens(selector)
+    token_set = set(tokens)
+    if field in {"cve", "ghsa", "cwe"}:
+        return _identifier_value(value, field) is not None
+    if field in {"rule_id", "source_record_id"}:
+        text = _text(value).lower()
+        if text in _PROVIDER_VALUES:
+            return False
+        if field == "source_record_id" and {"datasource", "provider", "namespace"} & token_set:
+            return False
+        if field == "rule_id" and {"datasource", "provider"} & token_set:
+            return False
+    if field == "cvss_score":
+        if "version" in token_set and not ({"score", "basescore", "base_score"} & token_set):
+            return False
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return False
+        return 0.0 <= number <= 10.0
+    if field == "cvss_vector":
+        return _text(value).upper().startswith("CVSS:")
+    if field == "installed_version":
+        forbidden_context = {"asvs", "schema", "specversion", "api", "rule", "control", "cvss"}
+        if forbidden_context & token_set:
+            return False
+        if tokens and tokens[-1] == "version":
+            allowed_parents = {"artifact", "component", "package", "dependency", "installed", "detected"}
+            if len(tokens) < 2 or tokens[-2] not in allowed_parents:
+                return False
+    if field == "package" and tokens:
+        if tokens[-1] in {"id", "uuid", "hash"} and "artifact" in token_set:
+            return False
+    return True
+
+
+def _candidate_rank(field: str, path: str, value: Any) -> tuple[int, int] | None:
+    """Rank a candidate path after semantic filtering.
+
+    The second value is a deterministic tie-breaker.  Lower ranks are better.
+    """
+    if not _semantic_field_valid(field, value, path):
+        return None
+    tokens = _path_tokens(path)
+    key = tokens[-1] if tokens else ""
+    parent = tokens[-2] if len(tokens) > 1 else ""
+    rank = path.count(".")
+    preferred = {
+        "source_record_id": {"vulnerabilityid", "vulnerability_id", "findingid", "finding_id", "uuid", "id"},
+        "rule_id": {"ruleid", "rule_id", "checkid", "check_id", "detector"},
+        "cve": {"cve", "cveid", "cve_id", "vulnerabilityid", "vulnerability_id", "id"},
+        "ghsa": {"ghsa", "ghsaid", "ghsa_id", "vendorids", "vendor_ids", "id"},
+        "cvss_score": {"basescore", "base_score", "cvssscore", "cvss_score", "score"},
+        "package": {"name", "packagename", "package_name", "pkgname", "pkg_name"},
+        "installed_version": {"installedversion", "installed_version", "version", "packageversion", "package_version"},
+    }.get(field, set())
+    if key not in preferred and not (field == "installed_version" and key == "version"):
+        rank += 3
+    if field == "package" and key in {"id", "uuid", "hash"}:
+        rank += 20
+    if field == "source_record_id" and parent in {"datasource", "provider", "artifact"}:
+        rank += 20
+    if field == "cve" and "relatedvulnerabilities" in tokens:
+        rank -= 5
+    if field == "ghsa" and key in {"vendorids", "vendor_ids", "ghsa", "ghsaid", "ghsa_id"}:
+        rank -= 5
+    if field == "cvss_score" and key in {"basescore", "base_score"}:
+        rank -= 6
+    if field == "package" and key == "name":
+        rank -= 5
+    if field == "installed_version" and parent in {"artifact", "component", "package", "dependency"}:
+        rank -= 4
+    return rank, len(path)
+
+
 def normalize_severity(value: Any, *, cvss_score: Any = None) -> tuple[str, str]:
     """Return normalized severity and an auditable deterministic basis."""
     text = _text(value).lower()
@@ -237,18 +353,39 @@ def _record_locations(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _map_source_file(value: str, source_dir: str | None) -> str:
+    return _resolve_source_file(value, source_dir)[0]
+
+
+def _resolve_source_file(value: str, source_dir: str | None) -> tuple[str, bool]:
+    """Normalize a report path and report whether a permitted file resolved."""
+    normalized = (value or "").replace("\\", "/")
     if not source_dir or not value:
-        return value
+        return normalized, False
     root = Path(source_dir).expanduser().resolve()
     candidate = Path(value)
     try:
         resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
         resolved.relative_to(root)
     except (OSError, ValueError):
-        return value.replace("\\", "/")
-    if resolved.is_file():
-        return resolved.relative_to(root).as_posix()
-    return value.replace("\\", "/")
+        resolved = None
+    if resolved is not None and resolved.is_file():
+        return resolved.relative_to(root).as_posix(), True
+    # Reports often contain a build-machine absolute path.  A suffix match is
+    # grounding only when exactly one permitted file matches; ambiguity and
+    # missing files remain report-only.
+    suffix = normalized.rstrip("/").lower()
+    matches: list[Path] = []
+    try:
+        for item in root.rglob("*"):
+            if item.is_file() and item.as_posix().lower().endswith(suffix):
+                matches.append(item.resolve())
+                if len(matches) > 1:
+                    break
+    except OSError:
+        return normalized, False
+    if len(matches) == 1:
+        return matches[0].relative_to(root).as_posix(), True
+    return normalized, False
 
 
 def _first(selection: list[Selection]) -> Selection | None:
@@ -325,12 +462,27 @@ def validate_mapping_against_payload(payload: Any, mapping: dict[str, Any]) -> M
         record_nodes = record_nodes[:10_000]
     coverage: dict[str, float] = {}
     type_scores: list[float] = []
+    semantic_observed = 0
+    semantic_valid = 0
+    errors: list[str] = []
     for field_name, selector in mapping["fields"].items():
         present = 0
         typed = 0
         for record in record_nodes:
             found = _first(select(record.value, selector, base_pointer=record.pointer))
             if found and found.value not in (None, "", [], {}):
+                if field_name in {
+                    "cve", "ghsa", "cwe", "cvss_score", "cvss_vector", "package",
+                    "installed_version", "rule_id", "source_record_id",
+                }:
+                    semantic_observed += 1
+                    if _semantic_field_valid(field_name, found.value, selector):
+                        semantic_valid += 1
+                    else:
+                        errors.append(
+                            f"{field_name}: selector {selector!r} produced a semantically invalid value"
+                        )
+                        continue
                 present += 1
                 if field_name in {"line_start", "line_end", "column", "cvss_score", "confidence"}:
                     typed += isinstance(found.value, (int, float)) and not isinstance(found.value, bool)
@@ -345,12 +497,19 @@ def validate_mapping_against_payload(payload: Any, mapping: dict[str, Any]) -> M
         coverage.get(field, 0.0)
         for field in ("rule_id", "cve", "ghsa", "advisory_id", "cwe")
     ) if record_nodes else 0.0
-    confidence = min(1.0, 0.45 * required_coverage + 0.25 * (sum(type_scores) / len(type_scores) if type_scores else 0) + 0.3 * identifier_rate)
+    semantic_validity = semantic_valid / semantic_observed if semantic_observed else 1.0
+    base_confidence = (
+        0.45 * required_coverage
+        + 0.25 * (sum(type_scores) / len(type_scores) if type_scores else 0)
+        + 0.3 * identifier_rate
+    )
+    confidence = min(1.0, base_confidence * semantic_validity)
     return MappingValidation(
         records_inspected=len(record_nodes), coverage=coverage,
         required_field_coverage=required_coverage,
         type_consistency=sum(type_scores) / len(type_scores) if type_scores else 0.0,
         identifier_rate=identifier_rate, confidence=confidence,
+        errors=tuple(sorted(set(errors))), semantic_validity=semantic_validity,
     )
 
 
@@ -393,6 +552,14 @@ def apply_mapping(
             if field_name not in extracted or extracted[field_name] in (None, "", [], {}):
                 extracted[field_name] = selected.value
                 provenance[field_name] = field_provenance(selected.pointer, selected.value)
+        semantic_rejections: dict[str, str] = {}
+        for field_name, selector in mapping["fields"].items():
+            if field_name in extracted and not _semantic_field_valid(field_name, extracted[field_name], selector):
+                semantic_rejections[field_name] = (
+                    f"selector {selector!r} produced a semantically invalid canonical value"
+                )
+                extracted.pop(field_name, None)
+                provenance.pop(field_name, None)
         if tool_selector:
             if "literal" in tool_selector:
                 tool_value = tool_selector["literal"]
@@ -415,20 +582,31 @@ def apply_mapping(
             continue
         title = _text(extracted.get("title")) or _text(extracted.get("rule_id")) or "Imported security finding"
         description = _text(extracted.get("description")) or title
-        rule_id = _text(extracted.get("rule_id")) or _text(extracted.get("cve")) or _text(extracted.get("ghsa")) or "generic-json"
-        cwe = _identifier(extracted.get("cwe"), "CWE")
+        cve = _identifier_value(extracted.get("cve"), "cve")
+        ghsa = _identifier_value(extracted.get("ghsa"), "ghsa")
+        source_record_id = _text(extracted.get("source_record_id")) or None
+        if source_record_id and source_record_id.lower() in _PROVIDER_VALUES:
+            source_record_id = None
+        rule_id = _text(extracted.get("rule_id")) or cve or ghsa or source_record_id or "generic-json"
+        cwe = _identifier_value(extracted.get("cwe"), "cwe")
         cvss_score = extracted.get("cvss_score")
         if isinstance(cvss_score, str):
             try:
                 cvss_score = float(cvss_score)
             except ValueError:
                 cvss_score = None
+        if cvss_score is not None and not _semantic_field_valid("cvss_score", cvss_score, mapping["fields"].get("cvss_score", "")):
+            semantic_rejections.setdefault("cvss_score", "value is outside the CVSS score range or lacks CVSS semantics")
+            cvss_score = None
+        normalized_file, source_grounded = _resolve_source_file(_text(extracted.get("file")), source_dir)
         raw = {
             "import_format": source_format,
             "record": record_node.value,
-            "source_record_id": _text(extracted.get("source_record_id")) or None,
+            "source_record_id": source_record_id,
             "identifiers": {
-                key: _text(extracted.get(key)) for key in ("cve", "ghsa", "advisory_id") if extracted.get(key)
+                key: value for key, value in (
+                    ("cve", cve), ("ghsa", ghsa), ("advisory_id", _text(extracted.get("advisory_id")) or None),
+                ) if value
             },
             "package": _text(extracted.get("package")) or None,
             "InstalledVersion": _text(extracted.get("installed_version")) or None,
@@ -441,18 +619,21 @@ def apply_mapping(
             "cvss_score": cvss_score,
             "cvss_vector": _text(extracted.get("cvss_vector")) or None,
             "severity_original": reported_severity,
+            "mapping_identity": mapping_id,
             "mapping_sha256": mapping_sha256(mapping),
             "provenance": provenance_envelope(
                 report_sha256=report_sha256, record_pointer=pointer,
                 mapping_identity=mapping_id, fields=provenance,
-                evidence_basis="source_grounded" if source_context_available else "report_only",
-                source_context_available=source_context_available,
+                evidence_basis="source_grounded" if source_grounded else "report_only",
+                source_context_available=source_grounded,
             ),
             "severity_normalization": severity_basis,
+            "source_context_requested": bool(source_context_available or source_dir),
         }
-        raw["source_context_available"] = source_context_available
+        if semantic_rejections:
+            raw["semantic_rejections"] = semantic_rejections
+        raw["source_context_available"] = source_grounded
         raw["locations"] = _record_locations(record_node.value)
-        normalized_file = _map_source_file(_text(extracted.get("file")), source_dir)
         finding = RawFinding(
             tool=_text(tool_value) or "generic-json", rule_id=rule_id, severity=severity,
             confidence=0.65, title=title, description=description,
@@ -463,8 +644,8 @@ def apply_mapping(
             owasp=_text(extracted.get("owasp")) or None,
             recommendation=_text(extracted.get("recommendation")), raw=raw,
             source_format=source_format, source_record_id=raw["source_record_id"],
-            cve=_text(extracted.get("cve")) or None,
-            ghsa=_text(extracted.get("ghsa")) or None,
+            cve=cve,
+            ghsa=ghsa,
             advisory_id=_text(extracted.get("advisory_id")) or None,
             cvss_score=cvss_score, cvss_vector=raw["cvss_vector"],
             package=raw["package"], installed_version=raw["InstalledVersion"],
@@ -473,8 +654,8 @@ def apply_mapping(
             fixed_version=raw["fixed_version"], references=raw["references"],
             source_status=raw["source_status"], record_pointer=pointer,
             report_sha256=report_sha256, mapping_identity=mapping_id,
-            field_provenance=provenance, evidence_basis="source_grounded" if source_context_available else "report_only",
-            source_context_available=source_context_available,
+            field_provenance=provenance, evidence_basis="source_grounded" if source_grounded else "report_only",
+            source_context_available=source_grounded,
         )
         has_primary = any(extracted.get(key) for key in (
             "rule_id", "cve", "ghsa", "advisory_id", "cwe", "title", "description",
@@ -487,4 +668,5 @@ def apply_mapping(
     accounting.validate()
     stats = validate_mapping_against_payload(payload, mapping).as_dict()
     stats["mapping_sha256"] = mapping_sha256(mapping)
+    stats["mapping_identity"] = mapping_id
     return findings, accounting, stats

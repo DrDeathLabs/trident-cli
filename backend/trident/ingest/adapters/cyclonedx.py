@@ -105,11 +105,12 @@ def parse_cyclonedx(
             "cvss_vector": _text(rating.get("vector")) or None,
             "severity_original": severity_value,
             "severity_normalization": severity_basis,
+            "source_context_requested": bool(source_dir),
             "provenance": provenance_envelope(
                 report_sha256=report_sha256, record_pointer=pointer,
                 mapping_identity=mapping_identity, fields=fields,
-                evidence_basis="source_grounded" if source_dir else "report_only",
-                source_context_available=bool(source_dir),
+                evidence_basis="report_only",
+                source_context_available=False,
             ),
         }
         findings.append(RawFinding(
@@ -130,8 +131,8 @@ def parse_cyclonedx(
                 _text((vuln.get("analysis") or {}).get("state"))
                 if isinstance(vuln.get("analysis"), dict) else None
             ),
-            evidence_basis="source_grounded" if source_dir else "report_only",
-            source_context_available=bool(source_dir),
+            evidence_basis="report_only",
+            source_context_available=False,
         ))
         accounting.add("mapped" if vuln_id and (package or cwe or description) else "partially_mapped", pointer)
     accounting.validate()

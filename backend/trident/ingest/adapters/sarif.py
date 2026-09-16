@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from trident.ingest.contracts import RecordAccounting, mapping_sha256
-from trident.ingest.mapping import normalize_severity
+from trident.ingest.mapping import _resolve_source_file, normalize_severity
 from trident.ingest.provenance import field_provenance, provenance_envelope
 from trident.tools.base import RawFinding
 
@@ -104,7 +104,8 @@ def parse_sarif(
                 location = locations[0].get("physicalLocation") or {}
             artifact = location.get("artifactLocation") if isinstance(location.get("artifactLocation"), dict) else {}
             region = location.get("region") if isinstance(location.get("region"), dict) else {}
-            file_name = _text(artifact.get("uri"))
+            original_file_name = _text(artifact.get("uri"))
+            file_name, source_grounded = _resolve_source_file(original_file_name, source_dir)
             source_record_id = _text(result.get("id")) or rule_id or f"{run_index}:{result_index}"
             cve, ghsa = _advisory_ids(result.get("message"))
             source_status = _text(result.get("baselineState") or result.get("kind")) or None
@@ -112,7 +113,7 @@ def parse_sarif(
                 "rule_id": field_provenance(f"{pointer}/ruleId", result.get("ruleId")) if "ruleId" in result else None,
                 "title": field_provenance(f"{pointer}/message", result.get("message")) if "message" in result else None,
                 "severity": field_provenance(f"{pointer}/level", result.get("level")) if "level" in result else None,
-                "file": field_provenance(f"{pointer}/locations/0/physicalLocation/artifactLocation/uri", file_name) if file_name else None,
+                "file": field_provenance(f"{pointer}/locations/0/physicalLocation/artifactLocation/uri", original_file_name) if original_file_name else None,
                 "line_start": field_provenance(f"{pointer}/locations/0/physicalLocation/region/startLine", region.get("startLine")) if region.get("startLine") is not None else None,
                 "cwe": field_provenance(f"{pointer}/properties/cwe", properties.get("cwe")) if properties.get("cwe") is not None else None,
             }
@@ -127,11 +128,12 @@ def parse_sarif(
                 "source_status": source_status,
                 "severity_original": level,
                 "severity_normalization": severity_basis,
+                "source_context_requested": bool(source_dir),
                 "provenance": provenance_envelope(
                     report_sha256=report_sha256, record_pointer=pointer,
                     mapping_identity=mapping_identity, fields=fields,
-                    evidence_basis="source_grounded" if source_dir else "report_only",
-                    source_context_available=bool(source_dir),
+                    evidence_basis="source_grounded" if source_grounded else "report_only",
+                    source_context_available=source_grounded,
                 ),
             }
             finding = RawFinding(
@@ -145,8 +147,8 @@ def parse_sarif(
                 report_sha256=report_sha256, record_pointer=pointer,
                 mapping_identity=mapping_identity, field_provenance=fields,
                 source_status=source_status,
-                evidence_basis="source_grounded" if source_dir else "report_only",
-                source_context_available=bool(source_dir),
+                evidence_basis="source_grounded" if source_grounded else "report_only",
+                source_context_available=source_grounded,
             )
             findings.append(finding)
             accounting.add("mapped" if rule_id and message else "partially_mapped", pointer)

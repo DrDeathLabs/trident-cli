@@ -85,6 +85,69 @@ def test_arbitrary_numeric_severity_is_not_assumed_to_be_cvss():
     assert basis == "cvss_score_semantics"
 
 
+def test_trivy_like_generic_mapping_preserves_identifier_and_cvss_semantics(tmp_path):
+    payload = {"Results": [{"Vulnerabilities": [
+        {"VulnerabilityID": "CVE-2023-30861", "VendorIDs": ["GHSA-m2qf-hxjv-5gpq"],
+         "PkgName": "flask", "InstalledVersion": "1.0.2", "Severity": "HIGH",
+         "CweIDs": ["CWE-539"], "CVSS": {"nvd": {"V3Score": 7.5,
+         "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"}}},
+        {"VulnerabilityID": "CVE-2018-18074", "VendorIDs": ["GHSA-x84v-xcm2-53pg"],
+         "PkgName": "requests", "InstalledVersion": "2.19.0", "Severity": "HIGH",
+         "CweIDs": ["CWE-522"], "CVSS": {"nvd": {"V3Score": 7.5,
+         "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"}}},
+    ]}]}
+    report = parse_report(_write(tmp_path / "trivy.json", payload), no_schema_ai=True)
+    assert report.accounting["mapped"] == 2
+    assert [(f.cve, f.ghsa, f.cwe, f.package, f.installed_version, f.cvss_score)
+            for f in report.findings] == [
+        ("CVE-2023-30861", "GHSA-M2QF-HXJV-5GPQ", "CWE-539", "flask", "1.0.2", 7.5),
+        ("CVE-2018-18074", "GHSA-X84V-XCM2-53PG", "CWE-522", "requests", "2.19.0", 7.5),
+    ]
+    assert all(f.mapping_identity for f in report.findings)
+    assert all(f.raw["mapping_identity"] == f.mapping_identity for f in report.findings)
+
+
+def test_grype_like_generic_mapping_separates_advisory_cve_package_and_cvss(tmp_path):
+    payload = {"matches": [{
+        "vulnerability": {"id": "GHSA-x84v-xcm2-53pg", "severity": "High",
+        "description": "Requests issue", "cvss": [{"version": "3.1",
+        "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "metrics": {"baseScore": 7.5}}], "cwes": [{"cwe": "CWE-522"}]},
+        "relatedVulnerabilities": [{"id": "CVE-2018-18074", "severity": "High"}],
+        "artifact": {"id": "opaque-artifact-id", "name": "requests", "version": "2.19.0",
+        "language": "python", "locations": [{"path": "requirements.txt"}]},
+    }, {
+        "vulnerability": {"id": "GHSA-j8r2-6x86-q33q", "severity": "Medium",
+        "description": "Other issue", "cvss": [{"version": "3.1", "metrics": {"baseScore": 6.1}}]},
+        "relatedVulnerabilities": [{"id": "CVE-2023-32681"}],
+        "artifact": {"id": "another-opaque-id", "name": "requests", "version": "2.19.0"},
+    }]}
+    report = parse_report(_write(tmp_path / "grype.json", payload), no_schema_ai=True)
+    assert report.accounting["mapped"] == 2
+    assert [
+        (f.source_record_id, f.ghsa, f.cve, f.package, f.installed_version, f.cvss_score)
+        for f in report.findings
+    ] == [
+        ("GHSA-x84v-xcm2-53pg", "GHSA-X84V-XCM2-53PG", "CVE-2018-18074", "requests", "2.19.0", 7.5),
+        ("GHSA-j8r2-6x86-q33q", "GHSA-J8R2-6X86-Q33Q", "CVE-2023-32681", "requests", "2.19.0", 6.1),
+    ]
+
+
+def test_semgrep_like_generic_mapping_does_not_fabricate_installed_version(tmp_path):
+    payload = {"results": [{
+        "check_id": "rule.one", "path": "app.py", "end": {"line": 2},
+        "extra": {"severity": "ERROR", "message": "bad", "metadata": {
+            "cwe": ["CWE-78"], "asvs": {"version": "4"}}},
+    }, {
+        "check_id": "rule.two", "path": "app.py", "end": {"line": 4},
+        "extra": {"severity": "WARNING", "message": "worse", "metadata": {
+            "cwe": ["CWE-327"], "asvs": {"version": "4"}}},
+    }]}
+    report = parse_report(_write(tmp_path / "semgrep.json", payload), no_schema_ai=True)
+    assert report.accounting["mapped"] == 2
+    assert all(f.installed_version is None for f in report.findings)
+
+
 def test_unknown_vendor_schema_fails_closed_without_explicit_mapping(tmp_path):
     path = _write(tmp_path / "vendor.json", {"threats": [{
         "threatCode": "TH-1", "headline": "Unsafe parser", "riskBand": 8,
@@ -186,8 +249,59 @@ def test_first_class_provenance_envelope_records_source_grounding(tmp_path):
     }
     report = parse_report(_write(tmp_path / "bom.json", bom), source_dir=str(source))
     provenance = report.findings[0].raw["provenance"]
-    assert provenance["source_context_available"] is True
-    assert provenance["evidence_basis"] == "source_grounded"
+    assert provenance["source_context_available"] is False
+    assert provenance["evidence_basis"] == "report_only"
+
+
+@pytest.mark.parametrize("report_file", ["missing.py", r"C:\outside\missing.py"])
+def test_generic_source_context_is_report_only_when_file_does_not_resolve(tmp_path, report_file):
+    source = tmp_path / "source"
+    source.mkdir()
+    payload = {"findings": [{
+        "id": "F-1", "title": "Unsafe operation", "severity": "high",
+        "file": report_file, "line": 1,
+    }]}
+    finding = parse_report(
+        _write(tmp_path / "report.json", payload), source_dir=str(source)
+    ).findings[0]
+    assert finding.source_context_available is False
+    assert finding.evidence_basis == "report_only"
+    assert finding.raw["provenance"]["source_context_available"] is False
+    assert finding.raw["source_context_requested"] is True
+
+
+def test_generic_source_context_does_not_guess_ambiguous_suffix(tmp_path):
+    source = tmp_path / "source"
+    (source / "one").mkdir(parents=True)
+    (source / "two").mkdir()
+    (source / "one" / "app.py").write_text("x\n", encoding="utf-8")
+    (source / "two" / "app.py").write_text("y\n", encoding="utf-8")
+    payload = {"findings": [{
+        "id": "F-1", "title": "Unsafe operation", "severity": "high",
+        "file": r"C:\build\app.py", "line": 1,
+    }]}
+    finding = parse_report(
+        _write(tmp_path / "report.json", payload), source_dir=str(source)
+    ).findings[0]
+    assert finding.source_context_available is False
+    assert finding.evidence_basis == "report_only"
+
+
+def test_sarif_source_context_is_report_only_when_location_is_missing(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    payload = {
+        "version": "2.1.0", "runs": [{"tool": {"driver": {"name": "holdout",
+        "rules": [{"id": "SEC-1", "properties": {"tags": ["security"]}}]}},
+        "results": [{"ruleId": "SEC-1", "level": "error", "message": {"text": "bad"},
+        "locations": [{"physicalLocation": {"artifactLocation": {"uri": "missing.py"},
+        "region": {"startLine": 1}}}]}]}],
+    }
+    finding = parse_report(
+        _write(tmp_path / "missing.sarif", payload), source_dir=str(source)
+    ).findings[0]
+    assert finding.source_context_available is False
+    assert finding.evidence_basis == "report_only"
 
 
 def test_advisory_identifier_counts_as_deterministic_security_identity(tmp_path):

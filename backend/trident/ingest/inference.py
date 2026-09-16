@@ -11,6 +11,7 @@ from trident.ingest.contracts import MappingProposal
 from trident.ingest.contracts import MappingValidation
 from trident.ingest.mapping import (
     MappingError,
+    _candidate_rank,
     validate_mapping,
     validate_mapping_against_payload,
 )
@@ -21,15 +22,15 @@ _MAX_SAMPLE = 200
 
 # These are intentionally common security vocabulary, not vendor adapters.
 ALIASES: dict[str, tuple[str, ...]] = {
-    "source_record_id": ("id", "recordid", "record_id", "issueid", "issue_id", "uuid", "findingid", "finding_id"),
+    "source_record_id": ("id", "recordid", "record_id", "issueid", "issue_id", "uuid", "findingid", "finding_id", "vulnerabilityid", "vulnerability_id"),
     "rule_id": ("ruleid", "rule_id", "rule", "checkid", "check_id", "check", "detector", "rulekey", "rule_key"),
-    "cve": ("cve", "cveid", "cve_id", "vulnerability", "vulnerabilityid", "vulnerability_id"),
-    "ghsa": ("ghsa", "ghsaid", "ghsa_id"),
+    "cve": ("cve", "cveid", "cve_id", "vulnerability", "vulnerabilityid", "vulnerability_id", "relatedvulnerabilities", "related_vulnerabilities"),
+    "ghsa": ("ghsa", "ghsaid", "ghsa_id", "vendorids", "vendor_ids", "vulnerability"),
     "advisory_id": ("advisory", "advisoryid", "advisory_id", "osvid", "osv_id"),
-    "cwe": ("cwe", "cweid", "cwe_id", "weakness", "weaknessid", "weakness_id"),
+    "cwe": ("cwe", "cweid", "cwe_id", "cweids", "cwe_ids", "weakness", "weaknessid", "weakness_id"),
     "severity": ("severity", "risk", "priority", "level", "impact", "rating"),
-    "cvss_score": ("cvss", "cvssscore", "cvss_score", "score", "securityseverity"),
-    "cvss_vector": ("vector", "cvssvector", "cvss_vector"),
+    "cvss_score": ("cvss", "cvssscore", "cvss_score", "score", "basescore", "base_score", "cvssbasescore", "v3score", "v40score", "securityseverity"),
+    "cvss_vector": ("vector", "cvssvector", "cvss_vector", "v3vector", "v40vector"),
     "title": ("title", "name", "issue", "summary", "problem"),
     "description": ("description", "details", "detail", "message", "reason", "explanation"),
     "recommendation": ("recommendation", "remediation", "fix", "solution", "mitigation"),
@@ -37,7 +38,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "line_start": ("line", "startline", "start_line", "linenumber", "line_number"),
     "line_end": ("endline", "end_line", "stopline", "stop_line"),
     "package": ("package", "component", "artifact", "dependency", "library", "module", "pkgname", "pkg_name"),
-    "installed_version": ("installedversion", "installed_version", "version", "packageversion", "package_version"),
+    "installed_version": ("installedversion", "installed_version", "packageversion", "package_version", "detectedversion", "detected_version", "artifact", "component", "package", "dependency", "installed", "detected"),
     "ecosystem": ("ecosystem", "packagetype", "package_type", "language"),
     "purl": ("purl", "packageurl", "package_url", "bomref", "bom_ref"),
     "cpe": ("cpe",),
@@ -94,7 +95,7 @@ def _candidate_collections(payload: Any) -> list[tuple[str, list[dict[str, Any]]
 
 def _find_field_path(record: dict[str, Any], field: str) -> str | None:
     aliases = {_norm_key(field), *(_norm_key(alias) for alias in ALIASES.get(field, ())) }
-    ranked: list[tuple[int, str]] = []
+    ranked: list[tuple[tuple[int, int], str]] = []
     for path, value in _walk_objects(record):
         if path == "$" or not isinstance(value, (str, int, float, bool, list)):
             continue
@@ -105,10 +106,14 @@ def _find_field_path(record: dict[str, Any], field: str) -> str | None:
         if key not in aliases and not nested_alias:
             continue
         # Direct keys are more reliable than deeply nested aliases; lists are
-        # acceptable for references but not for scalar identity fields.
-        depth = path.count(".")
-        penalty = 2 if isinstance(value, list) and field not in {"references", "cwe"} else 0
-        ranked.append((depth + penalty, path))
+        # acceptable for references and identifier collections.  Semantic
+        # ranking rejects provider IDs, CVSS versions, opaque artifact IDs,
+        # and specification versions before coverage can reward them.
+        candidate_rank = _candidate_rank(field, path, value)
+        if candidate_rank is None:
+            continue
+        penalty = 2 if isinstance(value, list) and field not in {"references", "cwe", "ghsa"} else 0
+        ranked.append(((candidate_rank[0] + penalty, candidate_rank[1]), path))
     if not ranked:
         return None
     path = sorted(ranked)[0][1]
@@ -133,8 +138,13 @@ def infer_mapping(payload: Any, *, name: str = "inferred-security-json") -> Mapp
             fields[field] = path
     if not fields:
         raise MappingError("record collection found, but no safe common security fields were identified")
-    if "rule_id" not in fields and "source_record_id" in fields:
-        fields["rule_id"] = fields["source_record_id"]
+    if "rule_id" not in fields:
+        if "cve" in fields:
+            fields["rule_id"] = fields["cve"]
+        elif "ghsa" in fields:
+            fields["rule_id"] = fields["ghsa"]
+        elif "source_record_id" in fields:
+            fields["rule_id"] = fields["source_record_id"]
     if not any(field in fields for field in (
         "rule_id", "cve", "ghsa", "advisory_id", "cwe", "title", "description", "severity", "package",
     )):
@@ -154,6 +164,14 @@ def infer_mapping(payload: Any, *, name: str = "inferred-security-json") -> Mapp
     }
     validate_mapping(mapping)
     validation = validate_mapping_against_payload(payload, mapping)
+    if validation.errors:
+        invalid_fields = {error.split(":", 1)[0] for error in validation.errors}
+        fields = {field: selector for field, selector in fields.items() if field not in invalid_fields}
+        mapping["fields"] = fields
+        if not fields:
+            raise MappingError("candidate fields failed semantic validation")
+        validate_mapping(mapping)
+        validation = validate_mapping_against_payload(payload, mapping)
     # The collection score is structural confidence; field validation is the
     # evidence confidence.  Keep them distinct in the mapping report.
     confidence = min(1.0, validation.confidence * 0.75 + collection_score * 0.25)
@@ -164,6 +182,7 @@ def infer_mapping(payload: Any, *, name: str = "inferred-security-json") -> Mapp
         type_consistency=validation.type_consistency,
         identifier_rate=validation.identifier_rate,
         confidence=confidence,
+        semantic_validity=validation.semantic_validity,
         errors=validation.errors,
     )
     return MappingProposal(mapping=mapping, source="deterministic", validation=validation)
@@ -230,10 +249,16 @@ def propose_mapping_with_model(payload: Any, *, backend=None, model: str | None 
                 proposed_value = proposed_value["mapping"]
             proposed_value = validate_mapping(proposed_value)
             candidate_validation = validate_mapping_against_payload(payload, proposed_value)
-            if candidate_validation.records_inspected == 0 or candidate_validation.confidence < 0.45:
+            if (
+                candidate_validation.records_inspected == 0
+                or candidate_validation.errors
+                or candidate_validation.semantic_validity < 1.0
+                or candidate_validation.confidence < 0.45
+            ):
                 raise MappingError(
                     "deterministic validation confidence is "
-                    f"{candidate_validation.confidence:.2f}"
+                    f"{candidate_validation.confidence:.2f}; "
+                    + "; ".join(candidate_validation.errors[:3])
                 )
             proposed = proposed_value
             validation = candidate_validation

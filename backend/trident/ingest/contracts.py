@@ -87,6 +87,7 @@ class MappingValidation:
     identifier_rate: float
     confidence: float
     errors: tuple[str, ...] = ()
+    semantic_validity: float = 1.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -96,6 +97,7 @@ class MappingValidation:
             "type_consistency": self.type_consistency,
             "identifier_rate": self.identifier_rate,
             "confidence": self.confidence,
+            "semantic_validity": self.semantic_validity,
             "errors": list(self.errors),
         }
 

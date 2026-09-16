@@ -145,9 +145,13 @@ def build_evidence_payload(
     raw = raw_evidence(finding)
     fmt = imported_format(finding)
     source_file = _safe_source_path(workspace, finding.file)
+    source_requested = bool(workspace or raw.get("source_context_requested"))
     payload: dict[str, Any] = {
         "basis": evidence_basis(finding, workspace),
-        "source_context": "available" if workspace else "unavailable",
+        "source_context": (
+            "available" if source_file else
+            "requested_unresolved" if source_requested else "unavailable"
+        ),
         "source_file": "available" if source_file else "unavailable",
         "normalized": {
             "tool": finding.tool,

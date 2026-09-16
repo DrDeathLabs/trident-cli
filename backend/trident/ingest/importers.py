@@ -21,7 +21,7 @@ from trident.events.publisher import EventType, publish_event
 from trident.ingest.adapters import parse_cyclonedx, parse_sarif
 from trident.ingest.contracts import RecordAccounting, mapping_sha256
 from trident.ingest.inference import infer_mapping, propose_mapping_with_model, schema_ai_requested
-from trident.ingest.mapping import MappingError, apply_mapping, mapping_from_file
+from trident.ingest.mapping import MappingError, apply_mapping, mapping_from_file, validate_mapping_against_payload
 from trident.ingest.registry import detect_format as registry_detect_format
 from trident.models import Finding, Severity, stable_finding_hash
 from trident.tools.base import RawFinding
@@ -117,7 +117,7 @@ def _object_pointer(payload: Any, target: Any, pointer: str = "", depth: int = 0
 
 def _attach_legacy_provenance(
     payload: Any, findings: list[RawFinding], *, report_sha256: str,
-    source_format: str, source_context_available: bool,
+    source_format: str, source_dir: str | None,
 ) -> None:
     identity = f"{source_format}:deterministic-adapter-v1"
     for finding in findings:
@@ -128,14 +128,24 @@ def _attach_legacy_provenance(
         raw.setdefault("report_sha256", report_sha256)
         raw.setdefault("record_pointer", pointer)
         raw.setdefault("mapping_identity", identity)
-        raw.setdefault("source_context_available", source_context_available)
+        _, source_grounded = resolve_source_path(finding.file, source_dir)
+        raw.setdefault("source_context_requested", bool(source_dir))
+        raw.setdefault("source_context_available", source_grounded)
+        raw.setdefault("provenance", {
+            "report_sha256": report_sha256,
+            "record_pointer": pointer,
+            "mapping_identity": identity,
+            "fields": {},
+            "evidence_basis": "source_grounded" if source_grounded else "report_only",
+            "source_context_available": source_grounded,
+        })
         finding.raw = raw
         finding.source_format = source_format
         finding.report_sha256 = report_sha256
         finding.record_pointer = pointer
         finding.mapping_identity = identity
-        finding.evidence_basis = "source_grounded" if source_context_available else "report_only"
-        finding.source_context_available = source_context_available
+        finding.evidence_basis = "source_grounded" if source_grounded else "report_only"
+        finding.source_context_available = source_grounded
 
 
 def _severity(value: Any) -> str:
@@ -339,6 +349,22 @@ def map_source_path(original: str, source_dir: str | None) -> str:
     if len(matches) == 1:
         return matches[0].relative_to(root).as_posix()
     return original.replace("\\", "/")
+
+
+def resolve_source_path(original: str, source_dir: str | None) -> tuple[str, bool]:
+    """Return the normalized report path and whether a permitted file exists."""
+    normalized = map_source_path(original, source_dir)
+    if not source_dir or not original:
+        return normalized, False
+    root = Path(source_dir).resolve()
+    candidate = Path(normalized)
+    try:
+        resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
+        if _under(resolved, root) and resolved.is_file():
+            return resolved.relative_to(root).as_posix(), True
+    except (OSError, ValueError):
+        pass
+    return normalized, False
 
 
 def _parse_sonarqube(
@@ -661,6 +687,12 @@ def parse_report(
                     raise MappingError(
                         "deterministic mapping confidence is below the safe threshold"
                     )
+            mapping_validation = validate_mapping_against_payload(payload, mapping_spec)
+            if mapping_validation.errors:
+                raise MappingError(
+                    "mapping semantic validation failed: "
+                    + "; ".join(mapping_validation.errors[:5])
+                )
             findings, accounting, mapping_stats = apply_mapping(
                 payload, mapping_spec, report_sha256=report_sha256,
                 source_format="generic-json", source_context_available=bool(source_dir),
@@ -686,7 +718,7 @@ def parse_report(
     if detected in {"sonarqube", "dependency-check"}:
         _attach_legacy_provenance(
             payload, findings, report_sha256=report_sha256,
-            source_format=detected, source_context_available=bool(source_dir),
+            source_format=detected, source_dir=source_dir,
         )
     # Attach report-level provenance to legacy first-class adapter records and
     # make the exact nested pointer available to downstream exporters.
@@ -695,7 +727,8 @@ def parse_report(
         raw.setdefault("report_sha256", report_sha256)
         raw.setdefault("record_pointer", finding.record_pointer)
         raw.setdefault("mapping_identity", mapping_stats.get("mapping_identity") if mapping_stats else detected)
-        raw.setdefault("source_context_available", bool(source_dir))
+        raw.setdefault("source_context_available", bool(getattr(finding, "source_context_available", False)))
+        raw.setdefault("source_context_requested", bool(source_dir))
         finding.raw = raw
     return ImportedReport(
         str(report_path), detected, report_sha256, accounting.total_records, tuple(findings),
