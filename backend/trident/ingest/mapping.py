@@ -342,7 +342,8 @@ def validate_mapping_against_payload(payload: Any, mapping: dict[str, Any]) -> M
     required = [coverage.get(field, 0.0) for field in ("title", "description", "rule_id", "cve", "severity", "package", "file")]
     required_coverage = max(required) if required else 0.0
     identifier_rate = max(
-        coverage.get(field, 0.0) for field in ("rule_id", "cve", "ghsa", "cwe")
+        coverage.get(field, 0.0)
+        for field in ("rule_id", "cve", "ghsa", "advisory_id", "cwe")
     ) if record_nodes else 0.0
     confidence = min(1.0, 0.45 * required_coverage + 0.25 * (sum(type_scores) / len(type_scores) if type_scores else 0) + 0.3 * identifier_rate)
     return MappingValidation(

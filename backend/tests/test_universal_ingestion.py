@@ -147,6 +147,17 @@ def test_generic_package_vulnerability_context_is_inherited_with_provenance(tmp_
     assert finding.raw["provenance"]["fields"]["package"]["pointer"] == "/packages/0/name"
 
 
+def test_advisory_identifier_counts_as_deterministic_security_identity(tmp_path):
+    path = _write(tmp_path / "osv.json", {"vulns": [{
+        "osv_id": "OSV-2026-1", "details": "Dependency flaw",
+        "database_specific": {"severity": "high"},
+        "affected": [{"package": {"name": "demo"}}],
+    }]})
+    report = parse_report(path, no_schema_ai=True)
+    assert report.accounting["mapped"] == 1
+    assert report.findings[0].advisory_id == "OSV-2026-1"
+
+
 def test_inspect_is_non_mutating_json_command(tmp_path):
     path = _write(tmp_path / "report.json", {"findings": [{
         "id": "F-1", "title": "Secret exposure", "severity": "high", "path": "secret.py",
