@@ -108,6 +108,7 @@ def parse_cyclonedx(
             "provenance": provenance_envelope(
                 report_sha256=report_sha256, record_pointer=pointer,
                 mapping_identity=mapping_identity, fields=fields,
+                evidence_basis="source_grounded" if source_dir else "report_only",
                 source_context_available=bool(source_dir),
             ),
         }

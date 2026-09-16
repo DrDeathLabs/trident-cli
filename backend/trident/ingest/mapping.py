@@ -445,6 +445,7 @@ def apply_mapping(
             "provenance": provenance_envelope(
                 report_sha256=report_sha256, record_pointer=pointer,
                 mapping_identity=mapping_id, fields=provenance,
+                evidence_basis="source_grounded" if source_context_available else "report_only",
                 source_context_available=source_context_available,
             ),
             "severity_normalization": severity_basis,

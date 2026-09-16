@@ -147,6 +147,49 @@ def test_generic_package_vulnerability_context_is_inherited_with_provenance(tmp_
     assert finding.raw["provenance"]["fields"]["package"]["pointer"] == "/packages/0/name"
 
 
+def test_import_provenance_envelope_records_source_grounding(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    payload = {"findings": [{
+        "id": "F-1", "title": "Unsafe operation", "severity": "high",
+        "file": "app.py", "line": 1,
+    }]}
+    report = parse_report(_write(tmp_path / "report.json", payload), source_dir=str(source))
+    provenance = report.findings[0].raw["provenance"]
+    assert provenance["source_context_available"] is True
+    assert provenance["evidence_basis"] == "source_grounded"
+
+
+def test_first_class_provenance_envelope_records_source_grounding(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    sarif = {
+        "version": "2.1.0", "runs": [{"tool": {"driver": {"name": "holdout",
+        "rules": [{"id": "SEC-1", "properties": {"tags": ["security"]}}]}},
+        "results": [{"ruleId": "SEC-1", "level": "error",
+        "message": {"text": "bad"}, "locations": [{"physicalLocation": {
+            "artifactLocation": {"uri": "app.py"}, "region": {"startLine": 1}
+        }}]}]}]
+    }
+    report = parse_report(_write(tmp_path / "results.sarif", sarif), source_dir=str(source))
+    provenance = report.findings[0].raw["provenance"]
+    assert provenance["source_context_available"] is True
+    assert provenance["evidence_basis"] == "source_grounded"
+
+    bom = {
+        "bomFormat": "CycloneDX", "specVersion": "1.5",
+        "components": [{"bom-ref": "pkg", "name": "demo", "version": "1.0.0"}],
+        "vulnerabilities": [{"id": "CVE-2026-0001", "description": "bad",
+                              "affects": [{"ref": "pkg"}]}],
+    }
+    report = parse_report(_write(tmp_path / "bom.json", bom), source_dir=str(source))
+    provenance = report.findings[0].raw["provenance"]
+    assert provenance["source_context_available"] is True
+    assert provenance["evidence_basis"] == "source_grounded"
+
+
 def test_advisory_identifier_counts_as_deterministic_security_identity(tmp_path):
     path = _write(tmp_path / "osv.json", {"vulns": [{
         "osv_id": "OSV-2026-1", "details": "Dependency flaw",
