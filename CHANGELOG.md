@@ -3,11 +3,7 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.3.2] - Local release candidate
-
-This entry describes the local candidate prepared for a separately approved
-release. It is not a statement that the public GitHub release has changed from
-v0.2.1.
+## [0.3.2] - 2026-09-17
 
 ### Added
 

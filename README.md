@@ -21,8 +21,9 @@ next: overlapping alerts, inconsistent severities, weak reachability context,
 and false positives competing with real vulnerabilities for engineering time.
 Trident is built to resolve that part of the work.
 
-This checkout prepares the local `v0.3.2` candidate. The current public GitHub
-release remains `v0.2.1` until a separately approved release action is taken.
+Trident 0.3.2 combines native scanner workflows with standardized and
+heterogeneous vulnerability-evidence ingestion through the same review and
+triage pipeline.
 
 The COE answers one question: is this candidate supported by the code? Triage
 answers the next one: how urgently should this confirmed issue be worked here?

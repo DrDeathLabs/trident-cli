@@ -55,6 +55,8 @@ jobs:
           test "$(git rev-list -n 1 "${RELEASE_TAG}")" = "${SOURCE_SHA}"
           PACKAGE_VERSION="$(python -c 'from trident import __version__; print(__version__)')"
           test "${RELEASE_TAG}" = "v${PACKAGE_VERSION}"
+          VERSION="${RELEASE_TAG#v}"
+          test -f "${GITHUB_WORKSPACE}/.github/releases/${VERSION}.md"
 
       - name: Build wheel and source distribution
         run: python -m build --wheel --sdist
@@ -87,4 +89,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release create "${RELEASE_TAG}" dist/* --generate-notes --verify-tag
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          NOTES_FILE="${GITHUB_WORKSPACE}/.github/releases/${VERSION}.md"
+          test -f "${NOTES_FILE}"
+          gh release create "${RELEASE_TAG}" dist/* --notes-file "${NOTES_FILE}" --verify-tag

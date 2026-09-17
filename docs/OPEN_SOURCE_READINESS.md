@@ -1,21 +1,18 @@
 # Open-source release readiness
 
-This is the release checklist for Trident CLI. It describes what a public
-installation and release must provide. It does not mean that a package has
-already been published.
+This is the release checklist for Trident CLI. It describes the public
+installation and release contract, including the controls required before a
+release artifact is published.
 
 ## Installation contract
 
-The current public release channel is a GitHub release artifact. Download the
-wheel from the release and install it locally:
+Public installation uses a GitHub release artifact. Download the wheel from the
+release and install it locally:
 
 ```bash
 python -m venv .venv
 python -m pip install path/to/trident-0.3.2-py3-none-any.whl
 ```
-
-This checkout is a local v0.3.2 release candidate. The current public GitHub
-release remains v0.2.1 until a human explicitly invokes the release workflow.
 
 The PyPI name `trident` is already occupied by another project. A future
 package-index release would require a separately chosen distribution name and
