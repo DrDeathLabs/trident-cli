@@ -76,9 +76,11 @@ def test_detects_supported_formats():
     assert detect_format(_dependency_report()) == "dependency-check"
 
 
-def test_rejects_cyclonedx_explicitly():
-    with pytest.raises(ImportErrorValue, match="CycloneDX"):
-        detect_format({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []})
+def test_detects_cyclonedx_vulnerability_report():
+    assert detect_format({
+        "bomFormat": "CycloneDX", "specVersion": "1.5", "components": [],
+        "vulnerabilities": [{"id": "CVE-2025-0001"}],
+    }) == "cyclonedx"
 
 
 def test_invalid_json_is_rejected(tmp_path):
@@ -117,6 +119,19 @@ def test_dependency_without_vulnerabilities_is_not_a_finding(tmp_path):
     report = parse_report(path)
     assert report.records == 1
     assert len(report.findings) == 1
+
+
+def test_dependency_vulnerability_without_cvss_is_still_imported(tmp_path):
+    payload = _dependency_report()
+    vulnerability = payload["dependencies"][0]["vulnerabilities"][0]
+    vulnerability.pop("cvssv2")
+    vulnerability["severity"] = "LOW"
+    path = _write(tmp_path / "dependency-check-no-cvss.json", payload)
+    report = parse_report(path)
+    assert report.records == 1
+    assert len(report.findings) == 1
+    assert report.findings[0].rule_id == "CVE-2024-0001"
+    assert "CVSS" not in report.findings[0].description
 
 
 def test_sonarqube_import_filters_closed_and_maps_fields(tmp_path):

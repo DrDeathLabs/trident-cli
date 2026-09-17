@@ -6,10 +6,15 @@ HELP_TOPICS: dict[str, str] = {
     "setup": """
 [bold cyan]Trident CLI setup[/bold cyan]
 
-1. Install the GitHub release wheel: [green]python -m pip install path/to/trident-0.1.0-py3-none-any.whl[/green]
+1. Install the v0.3.2 wheel: [green]python -m pip install path/to/trident-0.3.2-py3-none-any.whl[/green]
 2. Install tools: [green]trident install-tools --verify[/green]
-3. Configure Ollama, OpenAI, or Anthropic with the config commands.
-4. Scan a local path: [green]trident scan .[/green]
+3. Ollama is the default backend. The default expert model is
+   [green]nemotron-3-super:cloud[/green], an Ollama Cloud-tagged model reached
+   through the configured Ollama gateway. Configure it explicitly if needed:
+   [green]trident config set llm.backend ollama[/green]
+   [green]trident config set llm.expert_model nemotron-3-super:cloud[/green]
+4. OpenAI and Anthropic remain optional alternative backends.
+5. Scan a local path: [green]trident scan .[/green]
 
 The optional corpus model is built with [green]trident model refresh[/green].
 Exit codes are 0 for clean, 1 for findings at the gate, and 2 for scan errors.
@@ -17,9 +22,13 @@ Exit codes are 0 for clean, 1 for findings at the gate, and 2 for scan errors.
     "backends": """
 [bold cyan]LLM backends[/bold cyan]
 
-Ollama is the local default:
+Ollama is the default backend:
   [green]trident config set llm.backend ollama[/green]
   [green]trident config set llm.base_url http://localhost:11434[/green]
+  [green]trident config set llm.expert_model nemotron-3-super:cloud[/green]
+
+The default model is Ollama Cloud-tagged. The Ollama gateway URL describes the
+transport endpoint; it does not imply that this model runs on the local host.
 
 OpenAI:
   [green]trident config set llm.backend openai[/green]
@@ -39,7 +48,7 @@ Exit codes:
   0 = clean, 1 = confirmed findings at or above the gate, 2 = scan error
 
 Install the package and scanner tools, then write machine-readable output:
-  [green]python -m pip install path/to/trident-0.1.0-py3-none-any.whl
+  [green]python -m pip install path/to/trident-0.3.2-py3-none-any.whl
   trident install-tools
   trident scan . --format sarif --output-file trident.sarif --quiet[/green]
 
@@ -81,6 +90,12 @@ Examples:
 
 Use quiet mode when stdout or an output stream must contain only the selected
 machine-readable format.
+
+Import standardized or heterogeneous JSON without running scanners:
+  [green]trident inspect report.json --format json
+  trident scan --input-file report.json --format json[/green]
+Use [green]--mapping FILE[/green] for an explicit trident-json-mapping-v1
+mapping and [green]--no-schema-ai[/green] to keep schema inference deterministic.
 """,
 "guards": """
 [bold cyan]Triage adjustment mechanisms[/bold cyan]

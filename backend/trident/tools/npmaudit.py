@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 
 from sqlalchemy.orm import Session
@@ -22,22 +21,16 @@ class NpmAuditTool(ToolBase):
 
     def run(self, db: Session) -> list[RawFinding]:
         t0 = time.time()
-        # Run npm audit --json directly (no install needed)
-        self._emit_started(db, f"npm audit --json (cwd={self.workspace})")
         findings: list[RawFinding] = []
+        # Use the shared subprocess harness so Windows console shims resolve
+        # correctly and tool.started/tool.error/tool.stdout evidence is uniform.
+        _rc, output = self._run_cmd(
+            db, ["npm", "audit", "--json"], cwd=self.workspace, timeout=600,
+        )
         try:
-            proc = subprocess.run(
-                ["npm", "audit", "--json"], cwd=self.workspace,
-                capture_output=True, text=True, timeout=600,
-            )
-            try:
-                data = json.loads(proc.stdout)
-            except json.JSONDecodeError:
-                data = {}
-        except FileNotFoundError:
-            self._emit(db, "tool.error", {"tool": self.name, "error": "npm not found"})
-            self._emit_complete(db, 0, 0)
-            return []
+            data = json.loads(output)
+        except json.JSONDecodeError:
+            data = {}
         for vuln_id, vuln in (data.get("vulnerabilities") or {}).items():
             sev = SEV_MAP.get((vuln.get("severity") or "moderate").lower(), Severity.medium.value)
             via = vuln.get("via", [])

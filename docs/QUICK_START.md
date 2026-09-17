@@ -16,11 +16,22 @@ source .venv/bin/activate
 .\.venv\Scripts\Activate.ps1
 
 # Install the downloaded GitHub release wheel, or use the source checkout.
-python -m pip install path/to/trident-0.2.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.2-py3-none-any.whl
 trident --help
 ```
 
 You should see the Trident help output listing the available commands (`scan`, `config`, `model`, `install-tools`, `help`).
+
+To triage an existing security report without running scanners, inspect it first
+and then import it:
+
+```bash
+trident inspect findings.json --format json
+trident scan --input-file findings.json --format json
+```
+
+For a vendor schema that needs explicit mapping, use `--mapping FILE`; use
+`--no-schema-ai` when schema inference must remain fully deterministic.
 
 ---
 
@@ -59,12 +70,13 @@ trident install-tools --verify
 
 ## Step 3 - Configure your LLM
 
-Trident works with Ollama (local), OpenAI, or Anthropic. For this quick start, Ollama is assumed.
-
-Pull a model if you have not already:
+Trident works with the Ollama backend, OpenAI, or Anthropic. For this quick
+start, Ollama is assumed. The default `nemotron-3-super:cloud` model is
+Ollama Cloud-tagged; the gateway can be local without making model execution
+local. Pull a model only when intentionally using a local-only model:
 
 ```bash
-ollama pull gemma4:31b-cloud
+ollama pull gemma3:12b
 ```
 
 Configure Trident:
@@ -72,7 +84,7 @@ Configure Trident:
 ```bash
 trident config set llm.backend ollama
 trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model gemma4:31b-cloud
+trident config set llm.expert_model nemotron-3-super:cloud
 ```
 
 Confirm:

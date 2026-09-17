@@ -12,6 +12,9 @@ venv/
 .ci-venv/
 .pytest-tmp/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # Local release validation data
 .acceptance/
@@ -56,6 +59,7 @@ build/
 dist/
 *.whl
 *.tar.gz
+*.zip
 
 # Secrets & local config
 .env

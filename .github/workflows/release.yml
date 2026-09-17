@@ -1,9 +1,20 @@
 name: Release CLI package
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing tag to publish, for example v0.3.2"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact commit already tagged and approved for publication"
+        required: true
+        type: string
+      confirm:
+        description: "Type PUBLISH to authorize the public GitHub release"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,6 +29,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,9 +43,20 @@ jobs:
 
       - name: Verify tag matches package version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CONFIRM: ${{ inputs.confirm }}
         run: |
+          test "${CONFIRM}" = "PUBLISH"
+          test "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          git fetch --tags --force
+          test "$(git rev-list -n 1 "${RELEASE_TAG}")" = "${SOURCE_SHA}"
           PACKAGE_VERSION="$(python -c 'from trident import __version__; print(__version__)')"
-          test "${GITHUB_REF_NAME}" = "v${PACKAGE_VERSION}"
+          test "${RELEASE_TAG}" = "v${PACKAGE_VERSION}"
+          VERSION="${RELEASE_TAG#v}"
+          test -f "${GITHUB_WORKSPACE}/.github/releases/${VERSION}.md"
 
       - name: Build wheel and source distribution
         run: python -m build --wheel --sdist
@@ -63,4 +88,10 @@ jobs:
       - name: Create GitHub release with distributions
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          NOTES_FILE="${GITHUB_WORKSPACE}/.github/releases/${VERSION}.md"
+          test -f "${NOTES_FILE}"
+          gh release create "${RELEASE_TAG}" dist/* --notes-file "${NOTES_FILE}" --verify-tag

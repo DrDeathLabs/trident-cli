@@ -98,6 +98,23 @@ def test_unrelated_available_model_does_not_silently_fallback():
     assert calls == ["/api/version", "/api/tags"]
 
 
+def test_ollama_timeout_preserves_transport_attempt_metadata():
+    def handler(request: httpx.Request):
+        raise httpx.ReadTimeout("synthetic timeout", request=request)
+
+    backend = OllamaBackend(host="http://ollama.test", timeout=0.1, mode="local_gateway")
+    backend.max_retries = 1
+    backend.client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMUnavailable) as caught:
+        backend._post("/api/chat", {"model": "nemotron-3-super:cloud"})
+    details = caught.value.transport
+    assert details["attempts"] == 2
+    assert details["configured_max_retries"] == 1
+    assert details["attempt_timeout_seconds"] == 0.1
+    assert details["failure_reason"] == "request_timeout"
+    assert details["final_exception"] == "synthetic timeout"
+
+
 def test_application_repair_is_bounded_and_accepts_only_valid_retry():
     calls = {"n": 0}
 

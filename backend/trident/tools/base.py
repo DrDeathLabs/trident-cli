@@ -81,11 +81,36 @@ class RawFinding:
     file: str = ""
     line_start: int = 0
     line_end: int = 0
+    locations: list[dict[str, Any]] = field(default_factory=list)
     snippet: str = ""
     cwe: str | None = None
     owasp: str | None = None
     recommendation: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
+    # Additive canonical evidence fields.  Native scanner adapters may leave
+    # these unset; imported adapters populate them without replacing ``raw``.
+    source_format: str | None = None
+    source_record_id: str | None = None
+    cve: str | None = None
+    ghsa: str | None = None
+    advisory_id: str | None = None
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    package: str | None = None
+    installed_version: str | None = None
+    ecosystem: str | None = None
+    purl: str | None = None
+    cpe: str | None = None
+    dependency_path: list[str] | str | None = None
+    fixed_version: str | None = None
+    references: list[Any] = field(default_factory=list)
+    source_status: str | None = None
+    report_sha256: str | None = None
+    record_pointer: str | None = None
+    mapping_identity: str | None = None
+    field_provenance: dict[str, Any] = field(default_factory=dict)
+    evidence_basis: str = "scanner"
+    source_context_available: bool = False
 
 
 class ToolBase(ABC):

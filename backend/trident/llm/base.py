@@ -1,7 +1,7 @@
 """LLM backend abstraction.
 
 Single Ollama backend. The council model is configurable (default
-gemma4:31b-cloud) with optional per-role and per-job overrides. There is no
+nemotron-3-super:cloud) with optional per-role and per-job overrides. There is no
 fallback model: if the configured model is unreachable, the job fails clearly.
 """
 
@@ -44,6 +44,10 @@ class LLMError(RuntimeError):
 
 class LLMUnavailable(LLMError):
     """Raised when the model endpoint is unreachable after retries — no fallback."""
+
+    def __init__(self, message: str, *, transport: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.transport = dict(transport or {})
 
 
 class LLMBackend(ABC):
@@ -118,15 +122,34 @@ class OllamaBackend(LLMBackend):
         started = time.monotonic()
         attempts = 0
         last_error: Exception | None = None
+        last_status: int | None = None
+
+        def _transport(reason: str) -> dict[str, Any]:
+            return {
+                "endpoint": self._url(path),
+                "attempts": attempts,
+                "attempt_timeout_seconds": self.timeout,
+                "request_deadline_seconds": self.deadline,
+                "configured_max_retries": self.max_retries,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+                "final_exception": str(last_error) if last_error else None,
+                "final_status_code": last_status,
+                "failure_reason": reason,
+            }
         for attempt in range(self.max_retries + 1):
             attempts = attempt + 1
             if time.monotonic() - started > self.deadline:
-                raise LLMUnavailable(f"Ollama request deadline exceeded after {self.deadline}s")
+                details = _transport("request_deadline_exceeded")
+                raise LLMUnavailable(
+                    f"Ollama request deadline exceeded after {self.deadline}s",
+                    transport=details,
+                )
             try:
                 response = self.client.post(
                     self._url(path), json=payload, headers=self._headers(),
                     timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
                 )
+                last_status = response.status_code
                 if response.status_code >= 400:
                     if self._transient_status(response.status_code) and attempt < self.max_retries:
                         delay = min(20.0, 2.0 ** attempt) + random.uniform(0, 0.5)
@@ -152,9 +175,13 @@ class OllamaBackend(LLMBackend):
                 time.sleep(delay)
         if isinstance(last_error, (httpx.ReadTimeout, httpx.TimeoutException)):
             raise LLMUnavailable(
-                f"Ollama timed out at {self.host} after {self.timeout}s"
+                f"Ollama timed out at {self.host} after {self.timeout}s",
+                transport=_transport("request_timeout"),
             ) from last_error
-        raise LLMUnavailable(f"Ollama unreachable at {self.host}: {last_error}") from last_error
+        raise LLMUnavailable(
+            f"Ollama unreachable at {self.host}: {last_error}",
+            transport=_transport("network_error"),
+        ) from last_error
 
     def _get(self, path: str) -> tuple[dict, int]:
         try:
