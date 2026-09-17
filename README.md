@@ -9,9 +9,10 @@ command line. It combines twelve established scanners with a Council of Experts
 challenges high-severity and contested findings, and a red-team reviewer looks
 for attack chains across the confirmed findings.
 
-The COE is the review engine. It determines which scanner candidates are
-supported by the code, which are duplicates or false positives, and which need
-more evidence. Trident preserves those verdicts and the reasoning behind them.
+The COE is the validity and adjudication layer. It determines which candidate
+evidence is supported by the available evidence, which is duplicated or
+refuted, and which needs more evidence. Trident preserves those verdicts and
+the reasoning behind them.
 It then applies deterministic triage to the findings that survive review,
 using impact, attack vector, exploitability, fix effort, reachability, and
 attack-chain context to produce a worked P0-P4 remediation queue.
@@ -24,8 +25,11 @@ Trident is built to resolve that part of the work.
 Trident combines native scanner workflows with standardized and heterogeneous
 vulnerability-evidence ingestion through the same review and triage pipeline.
 
-The COE answers one question: is this candidate supported by the code? Triage
-answers the next one: how urgently should this confirmed issue be worked here?
+The COE answers one question: is this candidate supported by the available
+evidence? For source-grounded findings that evidence may include source code;
+for report-only imports it may consist of the imported report and preserved
+provenance. Triage answers the next one: how urgently should this confirmed
+issue be worked here?
 The triage pass assesses impact, attack vector, exploitability, fix effort, and
 reachability. Deterministic logic applies the rubric and evidence-based
 adjustments, incorporates attack-chain context, assigns P0-P4, and records the
@@ -77,7 +81,7 @@ the review process, and high-impact results still require qualified human review
 2. Run the configured deterministic scanners.
 3. Correlate and deduplicate overlapping candidates.
 4. Ask domain experts, the judge, and red-team review to adjudicate
-   candidates and discover supported novel issues.
+   candidates and discover issues supported by the available evidence.
 5. Apply class, reachability, and optional corpus-profile triage adjustments.
 6. Run automatic triage on confirmed findings.
 7. Write the primary report and, when requested, the complete worked-triage
@@ -118,7 +122,8 @@ as disposition evidence rather than being silently discarded.
 
 ## Capabilities
 
-- SAST: Semgrep, Bandit, gosec, and Checkov.
+- SAST: Semgrep, Bandit, and gosec.
+- Infrastructure/configuration/IaC: Checkov.
 - Software composition analysis: Grype, OSV-Scanner, Trivy, pip-audit,
   npm-audit, and govulncheck.
 - Secrets detection: Gitleaks and TruffleHog.

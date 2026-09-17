@@ -36,6 +36,8 @@ Use redacted output from `trident config show` when diagnosing setup.
 ## Triage boundary
 
 Scanner output is candidate evidence, not proof that every result is
-exploitable. Automatic triage can reject false positives from the actionable
-queue and preserves those candidates as audit evidence. Review high-impact
-decisions and validate findings in the authorized target environment.
+exploitable. Council review can refute candidates before triage; triage then
+prioritizes retained findings for the operational queue and preserves the
+review evidence. Guards adjust prioritization factors; they are not false-
+positive validity gates. Review high-impact decisions and validate findings in
+the authorized target environment.

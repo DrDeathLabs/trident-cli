@@ -34,7 +34,12 @@ Five domain experts review findings in their area of specialization. Each expert
 
 The judge is an independent adversarial reviewer. It re-examines any finding the council would confirm at **high severity or above**, and any finding where the experts disagree.
 
-The judge applies the **"reasonable attacker" test**: given the code in context, would a skilled attacker actually exploit this? If the answer is no - if the finding requires conditions that don't exist in practice - the judge can refute it, reducing false positives on high-severity results.
+The judge applies the **"reasonable attacker" test**: given the available
+evidence, including source context when available, would a skilled attacker
+actually exploit this? If the available evidence does not support the claimed
+conditions, the judge can refute the candidate, reducing false positives on
+high-severity results. Report-only evidence does not establish source-level
+reachability or exploitability.
 
 **When the judge fires:**
 - Any finding at `high` severity or above, regardless of expert consensus
@@ -70,7 +75,7 @@ This parallel-blind approach prevents anchoring, where one expert's early high-c
 
 ### Phase B - Cross-examination (contested findings only)
 
-If experts disagree on a finding (any mix of confirmed/disputed/refuted), the finding enters Phase B. Experts now see each other's full rationale and can revise their verdict. In agentic mode, experts can also use tool calls to explore the codebase (read files, grep for patterns, trace call paths) before finalizing.
+If experts disagree on a finding (any mix of confirmed/disputed/refuted), the finding enters Phase B. Experts now see each other's full rationale and can revise their verdict. In agentic mode, experts can also use tool calls to explore the codebase when source context is available (read files, grep for patterns, trace call paths) before finalizing.
 
 Findings where all experts agree (or abstain) skip Phase B entirely.
 
@@ -80,7 +85,7 @@ Findings where all experts agree (or abstain) skip Phase B entirely.
 
 | Verdict | Meaning | Appears in output? |
 |---------|---------|-------------------|
-| `confirmed` | This is a real vulnerability | Yes |
+| `confirmed` | Candidate evidence is retained for remediation review | Yes |
 | `refuted` | This candidate is a false positive | No final finding; retained as audit evidence |
 | `disputed` | Experts could not agree after all iterations | No final finding; retained as audit evidence |
 | `abstain` | Expert has no opinion on this finding | Does not count |

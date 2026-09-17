@@ -88,9 +88,9 @@ review provenance, original imported records, and disposition evidence. SARIF
 2.1.0 is suitable for code-scanning upload actions and exposes the same evidence
 under result properties. Triage runs automatically after council review. The
 selected output contains retained, actionable work items; scanner candidates
-rejected as false positives are excluded from that queue but remain represented
-with their disposition and evidence in JSON, SARIF properties, and the full
-triage sidecar.
+refuted by Council/deliberation are excluded from that queue, while triage
+prioritizes only retained/confirmed findings. Their disposition and evidence
+remain represented in JSON, SARIF properties, and the full triage sidecar.
 
 ## Severity gate
 

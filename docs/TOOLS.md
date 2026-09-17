@@ -12,6 +12,8 @@ results form the recall floor. Everything the AI council reviews starts here.
 No single scanner finds everything. Each tool specializes:
 
 - SAST tools find code-level vulnerabilities but miss dependency CVEs
+- Infrastructure/configuration tools find IaC policy violations and
+  misconfigurations
 - SCA tools find known CVEs but don't analyze code logic
 - Secrets tools find credentials but ignore code quality issues
 
@@ -38,6 +40,8 @@ Finds: SQL injection, command injection, hardcoded passwords, use of insecure fu
 Go-specific static analysis.
 
 Finds: SQL injection, path traversal, weak RNG, hardcoded credentials, unsafe use of `exec`, TLS configuration issues, and Go-specific patterns like integer overflow and unhandled errors.
+
+## Infrastructure, configuration, and IaC
 
 ### Checkov
 

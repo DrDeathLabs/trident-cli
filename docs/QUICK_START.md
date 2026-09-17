@@ -59,6 +59,7 @@ This takes 3-10 minutes depending on your connection. You will see each tool dow
   bandit: OK
   checkov: OK
   pip-audit: OK
+  npm-audit: OK
 
 [trident] 12 tool(s) ready
 ```
@@ -149,9 +150,10 @@ Trident Scan - my-project
 
 Exit code 0 means no confirmed finding at or above the severity gate (default:
 `high`). Exit code 1 means one or more confirmed findings reached the gate.
-Exit code 2 means ingestion or scan failure. Scanner candidates rejected by
-the council or automatic triage are retained as audit evidence but are not
-final actionable findings.
+Exit code 2 means ingestion or scan failure. Scanner candidates refuted or
+otherwise not retained by Council/deliberation are kept as audit evidence but
+are not final actionable findings; automatic triage only prioritizes retained
+confirmed findings.
 
 ---
 
