@@ -133,10 +133,11 @@ time. It is optional for pull-request scans.
 
 The package release workflow is deliberately separate from CI. It runs only
 after a human uses `workflow_dispatch` with an existing release tag, the exact
-approved source commit, and the literal `PUBLISH` confirmation. The workflow
-checks that the tag points to that commit and that the package version matches
-the tag before creating a GitHub release. A push, pull request, or tag creation
-does not publish a release.
+approved source commit, and the literal `PUBLISH` confirmation. It checks the
+annotated or lightweight tag, package version, curated versioned release notes,
+package artifacts, clean installation, and CLI smoke commands before creating
+a GitHub release. A push, pull request, or tag creation does not publish a
+release.
 
 ## Operational notes
 

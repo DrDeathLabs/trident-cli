@@ -1,6 +1,9 @@
 # Quick Start
 
-This guide gets you from zero to a completed scan in under 10 minutes, assuming Python 3.11+ is already installed and Ollama is running locally with a model available.
+This guide gets you from zero to a completed scan in under 10 minutes,
+assuming Python 3.11+ is already installed. Trident uses the Ollama backend by
+default; its gateway may be local while the default model,
+`nemotron-3-super:cloud`, is hosted through Ollama Cloud.
 
 ---
 
@@ -16,7 +19,7 @@ source .venv/bin/activate
 .\.venv\Scripts\Activate.ps1
 
 # Install the downloaded GitHub release wheel, or use the source checkout.
-python -m pip install path/to/trident-0.3.2-py3-none-any.whl
+python -m pip install path/to/trident-0.3.3-py3-none-any.whl
 trident --help
 ```
 

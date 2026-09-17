@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing tag to publish, for example v0.3.2"
+        description: "Existing tag to publish, for example v0.3.3"
         required: true
         type: string
       source_sha:
@@ -30,7 +30,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.release_tag }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -41,22 +41,20 @@ jobs:
       - name: Install packaging tools
         run: python -m pip install build twine
 
-      - name: Verify tag matches package version
+      - name: Verify approved tag, source, version, and notes
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          test "${CONFIRM}" = "PUBLISH"
-          test "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$
-          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
-          git fetch --tags --force
-          test "$(git rev-list -n 1 "${RELEASE_TAG}")" = "${SOURCE_SHA}"
           PACKAGE_VERSION="$(python -c 'from trident import __version__; print(__version__)')"
-          test "${RELEASE_TAG}" = "v${PACKAGE_VERSION}"
-          VERSION="${RELEASE_TAG#v}"
-          test -f "${GITHUB_WORKSPACE}/.github/releases/${VERSION}.md"
+          python ../scripts/verify_release_candidate.py \
+            --tag "${RELEASE_TAG}" \
+            --source-sha "${SOURCE_SHA}" \
+            --confirm "${CONFIRM}" \
+            --package-version "${PACKAGE_VERSION}" \
+            --notes-root "${GITHUB_WORKSPACE}/.github/releases"
 
       - name: Build wheel and source distribution
         run: python -m build --wheel --sdist
@@ -70,8 +68,11 @@ jobs:
           .release-venv/bin/python -m pip install dist/*.whl
 
       - name: Smoke-test installed CLI
+        env:
+          RELEASE_VERSION: ${{ inputs.release_tag }}
         run: |
           .release-venv/bin/trident --version
+          test "$(.release-venv/bin/trident --version)" = "trident, version ${RELEASE_VERSION#v}"
           .release-venv/bin/trident --help
           .release-venv/bin/trident scan --help
           .release-venv/bin/trident scan --help | grep -q -- '--triage-output-file'
@@ -89,9 +90,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          NOTES_FILE="${GITHUB_WORKSPACE}/.github/releases/${VERSION}.md"
+          NOTES_FILE="${GITHUB_WORKSPACE}/.github/releases/${RELEASE_VERSION#v}.md"
           test -f "${NOTES_FILE}"
           gh release create "${RELEASE_TAG}" dist/* --notes-file "${NOTES_FILE}" --verify-tag

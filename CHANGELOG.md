@@ -3,7 +3,29 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.3] - 2026-09-17
+
+This release supersedes the withdrawn v0.3.0 and v0.3.1 releases and the
+incomplete v0.3.2 publication.
+
+### Added
+
+- Curated, manually gated release publication with deterministic tag, source,
+  package-version, notes, build, and clean-install validation.
+
+### Changed
+
+- Universal vulnerability evidence ingestion is documented and packaged as the
+  supported v0.3.3 user-facing capability, including first-class formats,
+  bounded heterogeneous JSON mapping, schema-AI proposals, semantic
+  normalization, provenance, source grounding, and exact accounting.
+- Release and installation documentation now distinguishes a local Ollama
+  gateway from Ollama Cloud-tagged model execution.
+
 ## [0.3.2] - 2026-09-17
+
+> Historical incomplete publication; superseded by v0.3.3. Its tag exists, but
+> the GitHub Release workflow did not complete publication.
 
 ### Added
 
@@ -33,8 +55,7 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.3.1] - 2026-09-15
 
-> Historical local release candidate; withdrawn and not the current public
-> release.
+> Briefly published publicly, then withdrawn; superseded by v0.3.3.
 
 ### Fixed
 
@@ -48,8 +69,7 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.3.0] - 2026-09-15
 
-> Historical local release candidate; withdrawn and not the current public
-> release.
+> Briefly published publicly, then withdrawn; superseded by v0.3.3.
 
 ### Added
 

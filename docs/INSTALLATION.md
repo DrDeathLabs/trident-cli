@@ -9,18 +9,19 @@ install every scanner binary.
 - Python 3.11 or later
 - pip
 - Internet access when installing the package or downloading scanner tools
-- An LLM backend: Ollama locally, or an OpenAI/Anthropic account
+- An LLM backend: the Ollama backend through a configured gateway, or an
+  OpenAI/Anthropic account
 
 ## Install the CLI
 
 ### From a GitHub release artifact
 
 ~~~bash
-python -m pip install path/to/trident-0.3.2-py3-none-any.whl
+python -m pip install path/to/trident-0.3.3-py3-none-any.whl
 ~~~
 
 Download the wheel from the GitHub release, then install that local file.
-Trident 0.3.2 is distributed through an explicitly approved GitHub release
+Trident 0.3.3 is distributed through an explicitly approved GitHub release
 artifact. The PyPI
 name `trident` is already used by another project, so `pip install trident`
 is not a supported installation command for this release.

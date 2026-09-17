@@ -21,9 +21,8 @@ next: overlapping alerts, inconsistent severities, weak reachability context,
 and false positives competing with real vulnerabilities for engineering time.
 Trident is built to resolve that part of the work.
 
-Trident 0.3.2 combines native scanner workflows with standardized and
-heterogeneous vulnerability-evidence ingestion through the same review and
-triage pipeline.
+Trident combines native scanner workflows with standardized and heterogeneous
+vulnerability-evidence ingestion through the same review and triage pipeline.
 
 The COE answers one question: is this candidate supported by the code? Triage
 answers the next one: how urgently should this confirmed issue be worked here?
@@ -142,8 +141,8 @@ source .venv/bin/activate
 # Windows PowerShell
 # .venv\Scripts\Activate.ps1
 
-# Install the wheel downloaded from the GitHub release:
-python -m pip install path/to/trident-0.3.2-py3-none-any.whl
+# Install the v0.3.3 wheel downloaded from its GitHub release:
+python -m pip install path/to/trident-0.3.3-py3-none-any.whl
 trident --version
 trident install-tools --verify --warmup
 ```

@@ -6,7 +6,7 @@ HELP_TOPICS: dict[str, str] = {
     "setup": """
 [bold cyan]Trident CLI setup[/bold cyan]
 
-1. Install the v0.3.2 wheel: [green]python -m pip install path/to/trident-0.3.2-py3-none-any.whl[/green]
+1. Install the v0.3.3 wheel: [green]python -m pip install path/to/trident-0.3.3-py3-none-any.whl[/green]
 2. Install tools: [green]trident install-tools --verify[/green]
 3. Ollama is the default backend. The default expert model is
    [green]nemotron-3-super:cloud[/green], an Ollama Cloud-tagged model reached
@@ -48,7 +48,7 @@ Exit codes:
   0 = clean, 1 = confirmed findings at or above the gate, 2 = scan error
 
 Install the package and scanner tools, then write machine-readable output:
-  [green]python -m pip install path/to/trident-0.3.2-py3-none-any.whl
+  [green]python -m pip install path/to/trident-0.3.3-py3-none-any.whl
   trident install-tools
   trident scan . --format sarif --output-file trident.sarif --quiet[/green]
 
