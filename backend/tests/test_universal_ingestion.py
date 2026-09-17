@@ -148,6 +148,27 @@ def test_semgrep_like_generic_mapping_does_not_fabricate_installed_version(tmp_p
     assert all(f.installed_version is None for f in report.findings)
 
 
+def test_source_record_id_does_not_use_descriptive_field(tmp_path):
+    payload = {"findings": [{
+        "record_key": "AR-1", "commentary": "This is descriptive evidence",
+        "title": "Unsafe archive extraction", "severity": "high",
+    }]}
+    mapping = {
+        "mapping_version": MAPPING_VERSION,
+        "name": "identity-context",
+        "records": "$.findings[*]",
+        "tool": {"literal": "holdout"},
+        "fields": {
+            "source_record_id": "$.commentary",
+            "rule_id": "$.record_key",
+            "title": "$.title",
+            "severity": "$.severity",
+        },
+    }
+    with pytest.raises(Exception, match="semantic"):
+        parse_report(_write(tmp_path / "identity-context.json", payload), mapping=mapping)
+
+
 def test_unknown_vendor_schema_fails_closed_without_explicit_mapping(tmp_path):
     path = _write(tmp_path / "vendor.json", {"threats": [{
         "threatCode": "TH-1", "headline": "Unsafe parser", "riskBand": 8,

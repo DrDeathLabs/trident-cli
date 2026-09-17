@@ -239,6 +239,12 @@ def _semantic_field_valid(field: str, value: Any, selector: str = "") -> bool:
         text = _text(value).lower()
         if text in _PROVIDER_VALUES:
             return False
+        if field == "source_record_id" and {
+            "description", "message", "commentary", "narrative", "detail",
+            "explanation", "title", "caption", "epithet", "severity",
+            "risk", "priority", "gravity",
+        } & token_set:
+            return False
         if field == "source_record_id" and {"datasource", "provider", "namespace"} & token_set:
             return False
         if field == "rule_id" and {"datasource", "provider"} & token_set:
