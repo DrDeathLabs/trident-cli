@@ -8,8 +8,13 @@ HELP_TOPICS: dict[str, str] = {
 
 1. Install the v0.3.2 candidate wheel: [green]python -m pip install path/to/trident-0.3.2-py3-none-any.whl[/green]
 2. Install tools: [green]trident install-tools --verify[/green]
-3. Configure Ollama, OpenAI, or Anthropic with the config commands.
-4. Scan a local path: [green]trident scan .[/green]
+3. Ollama is the default backend. The default expert model is
+   [green]nemotron-3-super:cloud[/green], an Ollama Cloud-tagged model reached
+   through the configured Ollama gateway. Configure it explicitly if needed:
+   [green]trident config set llm.backend ollama[/green]
+   [green]trident config set llm.expert_model nemotron-3-super:cloud[/green]
+4. OpenAI and Anthropic remain optional alternative backends.
+5. Scan a local path: [green]trident scan .[/green]
 
 The optional corpus model is built with [green]trident model refresh[/green].
 Exit codes are 0 for clean, 1 for findings at the gate, and 2 for scan errors.
@@ -17,9 +22,13 @@ Exit codes are 0 for clean, 1 for findings at the gate, and 2 for scan errors.
     "backends": """
 [bold cyan]LLM backends[/bold cyan]
 
-Ollama is the local default:
+Ollama is the default backend:
   [green]trident config set llm.backend ollama[/green]
   [green]trident config set llm.base_url http://localhost:11434[/green]
+  [green]trident config set llm.expert_model nemotron-3-super:cloud[/green]
+
+The default model is Ollama Cloud-tagged. The Ollama gateway URL describes the
+transport endpoint; it does not imply that this model runs on the local host.
 
 OpenAI:
   [green]trident config set llm.backend openai[/green]

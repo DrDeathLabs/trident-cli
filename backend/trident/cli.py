@@ -196,11 +196,17 @@ def cli():
     automatically correct severity over- and under-escalations.
 
     \b
-    First-time setup:
+    First-time setup (Ollama backend; default model: nemotron-3-super:cloud):
       trident install-tools --verify --warmup
+      trident config set llm.backend ollama
+      trident config set llm.expert_model nemotron-3-super:cloud
+      trident scan .
+      trident model refresh                     (optional - enables corpus guard)
+
+    Optional alternative backends:
       trident config set llm.backend openai
       trident config set llm.openai_api_key sk-...
-      trident model refresh                     (optional - enables corpus guard)
+      trident config set llm.backend anthropic
 
     \b
     Run a scan:
