@@ -28,15 +28,35 @@ _ledger_lock = threading.Lock()
 _ledger_factory = None
 
 
+def _default_ledger_path() -> str | None:
+    """Return the durable LLM-ledger database path.
+
+    SQLite scan transactions can remain open while Council workers are waiting
+    on Ollama. Keeping the request ledger in that same database makes the
+    workers contend with the scan transaction and can turn otherwise healthy
+    model calls into ``database is locked`` failures. Use an explicit path when
+    supplied; otherwise give SQLite a sidecar ledger while leaving Postgres on
+    the shared database.
+    """
+    configured = os.environ.get("TRIDENT_LLM_LEDGER_PATH")
+    if configured:
+        return configured
+    if settings.db.backend == "sqlite":
+        return str(settings.db.sqlite_path.with_name(
+            f"{settings.db.sqlite_path.name}.llm-ledger.sqlite"
+        ))
+    return None
+
+
 def _ledger_session_factory():
-    """Use a dedicated SQLite ledger when configured to avoid scan write locks."""
+    """Use a dedicated SQLite ledger to avoid scan write locks."""
     global _ledger_factory
     if _ledger_factory is not None:
         return _ledger_factory
     with _ledger_lock:
         if _ledger_factory is not None:
             return _ledger_factory
-        ledger_path = os.environ.get("TRIDENT_LLM_LEDGER_PATH")
+        ledger_path = _default_ledger_path()
         if ledger_path:
             from sqlalchemy import create_engine, event
             from sqlalchemy.orm import sessionmaker
@@ -170,6 +190,9 @@ def _ledger_start(request_id: str, request_hash: str, input_hash: str, model: st
                     endpoint_mode=settings.llm.ollama_mode, request_settings={
                         "temperature": context.get("temperature"),
                         "max_repair_retries": settings.llm.max_repair_retries,
+                        "response_timeout_seconds": settings.llm.response_timeout,
+                        "request_deadline_seconds": settings.llm.request_deadline,
+                        "max_transport_retries": settings.llm.max_retries,
                         "think": settings.llm.think,
                     }, status="started",
                 ))
@@ -206,7 +229,7 @@ def _ledger_finish(request_id: str, result: StructuredResult, response: LLMRespo
             row.validation_errors = result.validation_errors
             row.semantic_validation_errors = result.semantic_errors
             row.retry_count = max(0, result.llm_calls - 1)
-            row.transport_status = "ok" if response else "error"
+            row.transport_status = "ok" if result.status == "completed" else "error"
             row.response_metadata = response.metadata or {} if response else {}
             row.latency_ms = ((response.metadata or {}).get("transport", {}).get("latency_ms")
                               if response else None)
@@ -327,12 +350,19 @@ def chat_structured(messages: list[ChatMessage], model_cls: type[T], *, model: s
                 _ledger_attempt(request_id, attempts, "response", response, None, time.monotonic() - started)
         except (LLMUnavailable, LLMError) as exc:
             last_error = str(exc)
+            transport_metadata = getattr(exc, "transport", {}) or {}
+            error_response = LLMResponse(
+                content="", metadata={"transport": transport_metadata} if transport_metadata else {}
+            )
             if request_id:
-                _ledger_attempt(request_id, attempts, "transport_error", None, last_error, time.monotonic() - started)
-            result = StructuredResult(None, response, last_error, llm_calls=attempts,
+                _ledger_attempt(
+                    request_id, attempts, "transport_error", error_response,
+                    last_error, time.monotonic() - started,
+                )
+            result = StructuredResult(None, error_response, last_error, llm_calls=attempts,
                                       status="unresolved_model_error", request_id=request_id)
             if request_id:
-                _ledger_finish(request_id, result, None)
+                _ledger_finish(request_id, result, error_response)
             return result
 
         obj, error = parse_validated(response.content, model_cls)

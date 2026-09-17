@@ -16,11 +16,12 @@ install every scanner binary.
 ### From a GitHub release artifact
 
 ~~~bash
-python -m pip install path/to/trident-0.2.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.2-py3-none-any.whl
 ~~~
 
 Download the wheel from the GitHub release, then install that local file.
-The first public release is distributed through GitHub artifacts. The PyPI
+Trident 0.3.2 is distributed through an explicitly approved GitHub release
+artifact. The PyPI
 name `trident` is already used by another project, so `pip install trident`
 is not a supported installation command for this release.
 
@@ -84,7 +85,7 @@ Check tool status without changing anything:
 trident install-tools --check
 ~~~
 
-Verify all twelve configured tools:
+Verify all twelve tools:
 
 ~~~bash
 trident install-tools --verify
@@ -119,9 +120,13 @@ Tools are stored in the platform-appropriate user data directory:
 Ollama is the default backend:
 
 ~~~bash
-TRIDENT_LLM_BACKEND=ollama TRIDENT_OLLAMA_HOST=http://localhost:11434 \
-EXPERT_MODEL=gemma4:31b-cloud trident scan .
+trident config set llm.backend ollama
+trident config set llm.base_url http://localhost:11434
+trident config set llm.expert_model nemotron-3-super:cloud
 ~~~
+
+The default model is Ollama Cloud-tagged. The configured Ollama gateway may be
+local, but that does not mean the default model executes on the local host.
 
 See [LLM_BACKENDS](LLM_BACKENDS.md) for cloud backend setup and data-handling
 considerations.

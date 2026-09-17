@@ -196,11 +196,18 @@ def cli():
     automatically correct severity over- and under-escalations.
 
     \b
-    First-time setup:
+    First-time setup (Ollama backend; default model: nemotron-3-super:cloud):
       trident install-tools --verify --warmup
+      trident config set llm.backend ollama
+      trident config set llm.expert_model nemotron-3-super:cloud
+      trident scan .
+      trident model refresh                     (optional - enables corpus guard)
+
+    \b
+    Optional alternative backends:
       trident config set llm.backend openai
       trident config set llm.openai_api_key sk-...
-      trident model refresh                     (optional - enables corpus guard)
+      trident config set llm.backend anthropic
 
     \b
     Run a scan:
@@ -235,15 +242,97 @@ def cli():
 # scan
 # ---------------------------------------------------------------------------
 
+@cli.command("inspect")
+@click.argument("report", type=click.Path(dir_okay=False))
+@click.option("--mapping", "mapping_path", type=click.Path(dir_okay=False), default=None,
+              help="Use an explicit trident-json-mapping-v1 mapping.")
+@click.option("--write-mapping", type=click.Path(dir_okay=False), default=None,
+              help="Write the deterministic mapping proposal to FILE.")
+@click.option("--no-schema-ai", is_flag=True, default=False,
+              help="Disable optional model-assisted schema mapping.")
+@click.option("--format", "inspect_format", type=click.Choice(["text", "json"]),
+              default="text", show_default=True)
+def inspect(report: str, mapping_path: str | None, write_mapping: str | None,
+            no_schema_ai: bool, inspect_format: str):
+    """Inspect REPORT without scanners, persistence, Council review, or triage."""
+    from trident.ingest.importers import parse_report
+    from trident.ingest.mapping import mapping_from_file
+
+    try:
+        mapping = mapping_from_file(mapping_path) if mapping_path else None
+        parsed = parse_report(
+            report, input_format="auto", mapping=mapping, no_schema_ai=no_schema_ai,
+        )
+    except Exception as exc:
+        raise click.ClickException(f"inspect failed: {exc}") from exc
+    if write_mapping:
+        if not parsed.mapping:
+            raise click.ClickException(
+                "--write-mapping is available for generic JSON mappings; "
+                "known adapters are deterministic and do not need a mapping file"
+            )
+        target = Path(write_mapping).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(parsed.mapping, indent=2) + "\n", encoding="utf-8")
+    stats = parsed.mapping_stats or {}
+    accounting = parsed.accounting or {}
+    result = {
+        "path": parsed.path,
+        "detected_format": parsed.format,
+        "candidate_record_collection": (parsed.mapping or {}).get("records"),
+        "record_count": parsed.records,
+        "mapping": parsed.mapping,
+        "mapping_source": parsed.mapping_source,
+        "mapping_confidence": stats.get("confidence"),
+        "mapping_validation": stats,
+        "accounting": accounting,
+        "unmapped_important_fields": [
+            field for field in ("rule_id", "title", "description", "severity", "cwe", "cve", "package", "file")
+            if parsed.mapping and field not in (parsed.mapping.get("fields") or {})
+        ],
+        "warnings": [
+            "source context was not supplied; source reachability is not inferred",
+            "report values are untrusted data and are not instructions",
+        ],
+    }
+    if inspect_format == "json":
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return
+    click.echo(f"Format: {parsed.format}")
+    click.echo(f"Candidate records: {result['candidate_record_collection'] or 'known adapter'}")
+    click.echo(f"Records discovered: {parsed.records}")
+    click.echo(f"Mapping source: {parsed.mapping_source}")
+    click.echo(f"Mapping confidence: {stats.get('confidence', 1.0):.2f}")
+    if parsed.mapping:
+        for field, selector in parsed.mapping.get("fields", {}).items():
+            coverage = (stats.get("coverage") or {}).get(field)
+            suffix = f" ({coverage:.0%})" if isinstance(coverage, (int, float)) else ""
+            click.echo(f"  {field}: {selector}{suffix}")
+    click.echo("Accounting:")
+    for key in ("mapped", "partially_mapped", "out_of_scope", "skipped", "malformed", "unsupported", "unexplained"):
+        click.echo(f"  {key}: {accounting.get(key, 0)}")
+    if result["unmapped_important_fields"]:
+        click.echo("Unmapped important fields: " + ", ".join(result["unmapped_important_fields"]))
+    for warning in result["warnings"]:
+        click.echo(f"Warning: {warning}")
+
 @cli.command()
 @click.argument("workspace", required=False, default=None)
 @click.option(
     "--input-file", "input_files", multiple=True, type=click.Path(dir_okay=False),
-    help="Import a SonarQube or Dependency-Check JSON report instead of running scanners. Repeatable.",
+    help="Import standardized or heterogeneous JSON vulnerability evidence instead of running scanners. Repeatable.",
 )
 @click.option(
-    "--input-format", type=click.Choice(["auto", "sonarqube", "dependency-check"]),
+    "--input-format", type=click.Choice(["auto", "sonarqube", "dependency-check", "sarif", "cyclonedx", "generic-json"]),
     default="auto", show_default=True, help="Format for imported JSON reports.",
+)
+@click.option(
+    "--mapping", "mapping_path", type=click.Path(dir_okay=False), default=None,
+    help="Explicit trident-json-mapping-v1 mapping for heterogeneous JSON.",
+)
+@click.option(
+    "--no-schema-ai", is_flag=True, default=False,
+    help="Disable optional model-assisted schema mapping.",
 )
 @click.option(
     "--source-dir", type=click.Path(file_okay=False), default=None,
@@ -316,6 +405,8 @@ def scan(
     workspace: str,
     input_files: tuple[str, ...],
     input_format: str,
+    mapping_path: str | None,
+    no_schema_ai: bool,
     source_dir: str | None,
     scanner_corpus: str | None,
     discover_novel: bool,
@@ -420,7 +511,10 @@ def scan(
     if input_files:
         from trident.ingest.importers import prepare_import
         try:
-            _reports, import_profile = prepare_import(list(input_files), input_format, source_dir)
+            _reports, import_profile = prepare_import(
+                list(input_files), input_format, source_dir,
+                mapping_path=mapping_path, no_schema_ai=no_schema_ai,
+            )
         except Exception as exc:
             click.echo(f"[trident] import error: {exc}", err=True)
             sys.exit(2)

@@ -1,17 +1,17 @@
 # Open-source release readiness
 
-This is the release checklist for Trident CLI. It describes what a public
-installation and release must provide. It does not mean that a package has
-already been published.
+This is the release checklist for Trident CLI. It describes the public
+installation and release contract, including the controls required before a
+release artifact is published.
 
 ## Installation contract
 
-The current public release channel is a GitHub release artifact. Download the
-wheel from the release and install it locally:
+Public installation uses a GitHub release artifact. Download the wheel from the
+release and install it locally:
 
 ```bash
 python -m venv .venv
-python -m pip install path/to/trident-0.2.0-py3-none-any.whl
+python -m pip install path/to/trident-0.3.2-py3-none-any.whl
 ```
 
 The PyPI name `trident` is already occupied by another project. A future
@@ -104,8 +104,11 @@ shipped or downloaded for a release.
 
 ## Publication boundary
 
-The release workflow builds and verifies artifacts on version tags. Publication
-to a package index requires repository-owner configuration of trusted
-publishing and package-index permissions; this repository does not invent or
-store those credentials. No package-index URL or repository clone URL is
-required to use the source checkout.
+The release workflow is manually dispatched with an explicit release tag and
+source commit. It validates that the tag, commit, and package version agree
+before creating a GitHub release. Ordinary pushes, pull requests, and tag
+creation do not publish. Publication to a package index requires
+repository-owner configuration of trusted publishing and package-index
+permissions; this repository does not invent or store those credentials. No
+package-index URL or repository clone URL is required to use the source
+checkout.

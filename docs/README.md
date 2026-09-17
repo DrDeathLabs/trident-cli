@@ -12,6 +12,8 @@ trail. They also document where human review remains mandatory.
   and local data locations.
 - [Quick start](QUICK_START.md) - configure a backend and complete a first scan.
 - [Scanning](SCANNING.md) - source types, profiles, options, and exit codes.
+- [JSON ingestion](JSON_INGESTION.md) - standardized formats, safe generic
+  mappings, inference, provenance, and accounting.
 
 ## Scan operators and triage reviewers
 
@@ -46,6 +48,7 @@ trail. They also document where human review remains mandatory.
 - [Development](DEVELOPMENT.md) - repository layout and local checks.
 - [Architecture](ARCHITECTURE.md) - scan data flow, persistence, and trust
   boundaries.
+- [Validation](VALIDATION.md) - layered tests, holdouts, and CLI evidence.
 - [Feature status](FEATURE_STATUS.md) - supported, optional, experimental, and
   unsupported behavior.
 
@@ -66,7 +69,8 @@ trail. They also document where human review remains mandatory.
 | Automatic P0-P4 triage | Supported | [Triage](TRIAGE.md) |
 | Table, JSON, and SARIF reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
 | Full triage sidecar reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
-| SonarQube and OWASP Dependency-Check JSON import | Supported | [Scanning](SCANNING.md) |
+| SonarQube, Dependency-Check, SARIF, and CycloneDX import | Supported | [Scanning](SCANNING.md) |
+| Heterogeneous JSON mapping | Supported with bounds | [JSON ingestion](JSON_INGESTION.md) |
 | CWE-profile triage adjustment | Optional; requires refresh | [Corpus calibration](CORPUS_GUARD_MODEL.md) |
 | Agentic exploration | Supported, optional; off by default | [Agentic exploration](AGENTIC_MODE.md) |
 | Runtime penetration testing | Unsupported | [Limitations](LIMITATIONS.md) |

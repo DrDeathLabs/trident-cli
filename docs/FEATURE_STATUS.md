@@ -49,8 +49,11 @@ This table describes the current standalone CLI capabilities.
 |-----------|--------|-------|
 | SonarQube JSON import | Supported | Use `--input-file`; native scanner subprocesses are bypassed |
 | OWASP Dependency-Check JSON import | Supported | Requires `reportSchema: 1.1` |
+| SARIF 2.1.0 import | Supported | Security results and rule/location provenance are preserved |
+| CycloneDX vulnerability JSON import | Supported | Vulnerability-bearing BOMs are imported; inventory-only BOMs are not findings |
 | Multiple supported JSON inputs | Supported | Repeat `--input-file` for one import job |
-| Arbitrary JSON conversion | Unsupported | Unknown schemas are rejected rather than guessed |
+| Heterogeneous vulnerability JSON mapping | Supported with bounds | Deterministic inference, optional validated schema-AI proposals, or explicit `trident-json-mapping-v1`; semantic ambiguity and non-security JSON fail closed |
+| Native/external JSON evidence | Supported with bounds | Trivy, Grype, and Semgrep-shaped reports use generic mapping; they are not first-class adapters |
 
 ## LLM backends
 
