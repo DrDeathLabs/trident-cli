@@ -125,6 +125,9 @@ trident config set llm.base_url http://localhost:11434
 trident config set llm.expert_model nemotron-3-super:cloud
 ~~~
 
+The default model is Ollama Cloud-tagged. The configured Ollama gateway may be
+local, but that does not mean the default model executes on the local host.
+
 See [LLM_BACKENDS](LLM_BACKENDS.md) for cloud backend setup and data-handling
 considerations.
 

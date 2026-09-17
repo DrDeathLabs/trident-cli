@@ -70,12 +70,13 @@ trident install-tools --verify
 
 ## Step 3 - Configure your LLM
 
-Trident works with Ollama (local), OpenAI, or Anthropic. For this quick start, Ollama is assumed.
-
-Pull a model if you have not already:
+Trident works with the Ollama backend, OpenAI, or Anthropic. For this quick
+start, Ollama is assumed. The default `nemotron-3-super:cloud` model is
+Ollama Cloud-tagged; the gateway can be local without making model execution
+local. Pull a model only when intentionally using a local-only model:
 
 ```bash
-ollama pull nemotron-3-super:cloud
+ollama pull gemma3:12b
 ```
 
 Configure Trident:
