@@ -11,8 +11,11 @@ wheel from the release and install it locally:
 
 ```bash
 python -m venv .venv
-python -m pip install path/to/trident-0.3.1-py3-none-any.whl
+python -m pip install path/to/trident-0.3.2-py3-none-any.whl
 ```
+
+This checkout is a local v0.3.2 release candidate. The current public GitHub
+release remains v0.2.1 until a human explicitly invokes the release workflow.
 
 The PyPI name `trident` is already occupied by another project. A future
 package-index release would require a separately chosen distribution name and
@@ -104,8 +107,11 @@ shipped or downloaded for a release.
 
 ## Publication boundary
 
-The release workflow builds and verifies artifacts on version tags. Publication
-to a package index requires repository-owner configuration of trusted
-publishing and package-index permissions; this repository does not invent or
-store those credentials. No package-index URL or repository clone URL is
-required to use the source checkout.
+The release workflow is manually dispatched with an explicit release tag and
+source commit. It validates that the tag, commit, and package version agree
+before creating a GitHub release. Ordinary pushes, pull requests, and tag
+creation do not publish. Publication to a package index requires
+repository-owner configuration of trusted publishing and package-index
+permissions; this repository does not invent or store those credentials. No
+package-index URL or repository clone URL is required to use the source
+checkout.

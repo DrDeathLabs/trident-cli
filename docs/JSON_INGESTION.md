@@ -62,6 +62,14 @@ provider may propose a mapping only when explicitly enabled with
 `TRIDENT_SCHEMA_AI=1`; the proposal is validated and then executed by the same
 deterministic mapper. `--no-schema-ai` disables that path.
 
+Semantic validation is part of mapping confidence. A field named `id` is not
+accepted as a CVE, GHSA, CWE, rule, or source record identity unless its values
+have the corresponding meaning. Data-source/provider identifiers, descriptive
+text, schema versions, CVSS versions, and arbitrary numeric risk values are not
+promoted into finding identifiers, package versions, or CVSS scores without
+supporting context. Original values remain available when a normalized value is
+accepted.
+
 ## Accounting and provenance
 
 Every record in the selected collection terminates as exactly one of
@@ -78,8 +86,10 @@ context was available. Normalized severity never replaces the original value.
 ## Source context
 
 Report-only imports are explicitly marked `report_only`; source reachability is
-`unknown` and source exploitability is not claimed. `--source-dir` can add
-read-only code context and path mapping without running scanners. Novel source
+`unknown` and source exploitability is not claimed. `--source-dir` requests
+read-only code context and path mapping without running scanners, but source
+grounding is decided per finding: an absent, outside-root, or ambiguous file
+does not become grounded merely because the option was supplied. Novel source
 discovery remains opt-in with `--discover-novel`.
 
 ## Scope and limits

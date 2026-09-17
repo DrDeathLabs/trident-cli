@@ -129,6 +129,15 @@ echo "$CALIBRATION_DIR"
 Building the model downloads vulnerability feeds and can take significant
 time. It is optional for pull-request scans.
 
+## Public release boundary
+
+The package release workflow is deliberately separate from CI. It runs only
+after a human uses `workflow_dispatch` with an existing release tag, the exact
+approved source commit, and the literal `PUBLISH` confirmation. The workflow
+checks that the tag points to that commit and that the package version matches
+the tag before creating a GitHub release. A push, pull request, or tag creation
+does not publish a release.
+
 ## Operational notes
 
 - Configure an LLM backend before scanning. Cloud backends receive the code

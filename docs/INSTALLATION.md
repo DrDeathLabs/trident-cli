@@ -16,11 +16,12 @@ install every scanner binary.
 ### From a GitHub release artifact
 
 ~~~bash
-python -m pip install path/to/trident-0.3.1-py3-none-any.whl
+python -m pip install path/to/trident-0.3.2-py3-none-any.whl
 ~~~
 
 Download the wheel from the GitHub release, then install that local file.
-The first public release is distributed through GitHub artifacts. The PyPI
+The v0.3.2 candidate is intended to be distributed through an explicitly
+approved GitHub release artifact. The PyPI
 name `trident` is already used by another project, so `pip install trident`
 is not a supported installation command for this release.
 

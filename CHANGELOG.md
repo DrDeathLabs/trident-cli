@@ -3,7 +3,42 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.2] - Local release candidate
+
+This entry describes the local candidate prepared for a separately approved
+release. It is not a statement that the public GitHub release has changed from
+v0.2.1.
+
+### Added
+
+- Universal vulnerability evidence ingestion through deterministic adapters for
+  SonarQube, OWASP Dependency-Check, SARIF 2.1.0, and CycloneDX vulnerability
+  JSON, plus bounded generic JSON mapping.
+- `trident inspect` for non-mutating format detection, record accounting, and
+  mapping inspection.
+
+### Changed
+
+- Generic mappings now use semantic validation for identifier classes, package
+  and installed-version evidence, CVSS fields, and field-level provenance.
+- Optional schema AI can propose a mapping only; Trident validates and executes
+  that mapping deterministically, and fails closed when evidence is ambiguous.
+- Imported evidence preserves source records, report hashes, JSON pointers,
+  mapping identity, original values, source context, and terminal accounting.
+- Native scanner output and imported evidence share correlation, Council,
+  judge, red-team, guard, triage, and reporting stages.
+
+### Fixed
+
+- Improved Ollama transport and ledger observability, source-grounding
+  correctness, malformed-record accounting, and release/package validation.
+- Corrected release preparation so public publication requires an explicit
+  human-controlled workflow action.
+
 ## [0.3.1] - 2026-09-15
+
+> Historical local release candidate; withdrawn and not the current public
+> release.
 
 ### Fixed
 
@@ -16,6 +51,9 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   default `nemotron-3-super:cloud` model.
 
 ## [0.3.0] - 2026-09-15
+
+> Historical local release candidate; withdrawn and not the current public
+> release.
 
 ### Added
 

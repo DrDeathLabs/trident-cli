@@ -21,6 +21,9 @@ next: overlapping alerts, inconsistent severities, weak reachability context,
 and false positives competing with real vulnerabilities for engineering time.
 Trident is built to resolve that part of the work.
 
+This checkout prepares the local `v0.3.2` candidate. The current public GitHub
+release remains `v0.2.1` until a separately approved release action is taken.
+
 The COE answers one question: is this candidate supported by the code? Triage
 answers the next one: how urgently should this confirmed issue be worked here?
 The triage pass assesses impact, attack vector, exploitability, fix effort, and
@@ -139,7 +142,7 @@ source .venv/bin/activate
 # .venv\Scripts\Activate.ps1
 
 # Install the wheel downloaded from the GitHub release:
-python -m pip install path/to/trident-0.3.1-py3-none-any.whl
+python -m pip install path/to/trident-0.3.2-py3-none-any.whl
 trident --version
 trident install-tools --verify --warmup
 ```
@@ -196,8 +199,9 @@ Exit codes are stable for automation:
 | `2` | Scan or ingestion error. |
 
 The repository includes a [SARIF workflow example](trident-scan.yml), a
-[CLI CI workflow](.github/workflows/ci.yml), and a tag-triggered package
-[release verification workflow](.github/workflows/release.yml).
+[CLI CI workflow](.github/workflows/ci.yml), and a manually invoked package
+[release workflow](.github/workflows/release.yml). The release workflow does
+not publish on ordinary pushes, pull requests, or tag creation.
 
 ## Documentation
 

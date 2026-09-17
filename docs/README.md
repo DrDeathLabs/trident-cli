@@ -69,7 +69,8 @@ trail. They also document where human review remains mandatory.
 | Automatic P0-P4 triage | Supported | [Triage](TRIAGE.md) |
 | Table, JSON, and SARIF reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
 | Full triage sidecar reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
-| SonarQube and OWASP Dependency-Check JSON import | Supported | [Scanning](SCANNING.md) |
+| SonarQube, Dependency-Check, SARIF, and CycloneDX import | Supported | [Scanning](SCANNING.md) |
+| Heterogeneous JSON mapping | Supported with bounds | [JSON ingestion](JSON_INGESTION.md) |
 | CWE-profile triage adjustment | Optional; requires refresh | [Corpus calibration](CORPUS_GUARD_MODEL.md) |
 | Agentic exploration | Supported, optional; off by default | [Agentic exploration](AGENTIC_MODE.md) |
 | Runtime penetration testing | Unsupported | [Limitations](LIMITATIONS.md) |
