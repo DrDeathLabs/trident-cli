@@ -203,6 +203,7 @@ def cli():
       trident scan .
       trident model refresh                     (optional - enables corpus guard)
 
+    \b
     Optional alternative backends:
       trident config set llm.backend openai
       trident config set llm.openai_api_key sk-...
