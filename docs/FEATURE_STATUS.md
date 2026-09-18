@@ -59,7 +59,7 @@ This table describes the current standalone CLI capabilities.
 
 | Capability | Status | Notes |
 |-----------|--------|-------|
-| Ollama | Supported | Local default |
+| Ollama | Supported | Default backend; gateway may be local while the selected model may be cloud-tagged |
 | OpenAI | Supported | Requires OPENAI_API_KEY |
 | Anthropic | Supported | Requires ANTHROPIC_API_KEY |
 

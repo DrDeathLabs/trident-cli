@@ -2,7 +2,8 @@
 
 An attack chain is a multi-step path where several moderate findings combine
 into a more serious attack. Trident's red-team reviewer looks for these paths
-after each council iteration.
+after each council iteration using the confirmed findings and available
+evidence; source context is used when it exists.
 
 ---
 
@@ -10,7 +11,10 @@ after each council iteration.
 
 A finding rated P3 (low priority) alone might be a path traversal that reads files from a constrained directory. A second P3 finding might be a hardcoded internal API key. Together, they allow an attacker to read the key file and escalate to full API access - a critical impact that neither finding individually implies.
 
-Attack chains capture this compounding. The red team reviews all confirmed findings for combinations that create a materially worse attack scenario than the sum of their parts.
+Attack chains capture this compounding. The red team reviews all confirmed
+findings and their available evidence for combinations that create a materially
+worse attack scenario than the sum of their parts. A report-only chain does not
+by itself establish source reachability or exploitability.
 
 ---
 
@@ -18,7 +22,7 @@ Attack chains capture this compounding. The red team reviews all confirmed findi
 
 After each council iteration, the red team receives all confirmed findings from that iteration plus all findings confirmed in prior iterations. It evaluates combinations for:
 
-1. **Logical sequencing** - can the output of exploiting finding A feed into finding B? (e.g., steal credential via A, use it for auth bypass in B)
+1. **Logical sequencing** - can the available evidence support the output of exploiting finding A feeding into finding B? (e.g., steal credential via A, use it for auth bypass in B)
 2. **Privilege escalation** - does chaining move the attacker from low-privilege to high-privilege access?
 3. **Boundary crossing** - does the chain cross a trust boundary (unauthenticated → authenticated, unprivileged → admin, local → remote)?
 4. **Impact amplification** - does the combined impact exceed what any individual finding implies?
@@ -73,7 +77,7 @@ Attack chains appear in the top-level `attack_chains` array in JSON output. Each
 | `id` | string | UUID for this chain |
 | `goal` | string | What an attacker achieves at the end of the chain |
 | `steps` | array of strings | Ordered exploitation steps |
-| `likelihood` | string | `high`, `medium`, or `low` - how plausible the chain is given the codebase |
+| `likelihood` | string | `high`, `medium`, or `low` - how plausible the chain is given the available evidence and source context when present |
 | `iteration` | int | Council iteration in which this chain was identified |
 | `finding_ids` | array | UUIDs of the participating findings |
 
