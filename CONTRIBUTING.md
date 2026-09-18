@@ -46,9 +46,12 @@ Scanner adapters live under `backend/trident/tools/`. An adapter should:
 - include focused tests for parsing, exit behavior, and malformed output;
 - update the supported-tool and third-party-notice documentation.
 
-Trident treats scanner output as candidate evidence. Correlation, council
-review, guards, and automatic triage decide what is actionable while retaining
-rejected candidates in reports and triage evidence.
+Trident treats scanner output as candidate evidence. Correlation groups related
+evidence; Council/deliberation decides whether candidates are retained,
+refuted, disputed, or otherwise actionable; guards adjust evidence factors and
+prioritization; and automatic triage assigns operational priority only to
+retained/confirmed findings. Rejected candidates remain in reports and triage
+evidence.
 
 ## Documentation and test changes
 

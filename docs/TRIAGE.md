@@ -12,17 +12,20 @@ compute one of five operational priority tiers, P0-P4. The model is not asked
 to emit an opaque P0-P4 label directly.
 
 Scanner output is intentionally a candidate set: scanner false positives are
-expected and are useful recall evidence. Council verdicts and triage remove
-rejected candidates from the final actionable queue; false-positive and
-out-of-scope quality-finding counts and their evidence remain available in
-JSON/SARIF properties and the full triage sidecar. A `confirmed` status is the
-workflow's retained-for-remediation state. It is not a universal claim that
-the scanner record is factually or source-level proven. Imported SonarQube
-`CODE_SMELL` records are classified as `out_of_scope`, not as false positives:
-the original Sonar finding may be valid, but it is not a security remediation
-item. For report-only imports, the queue is based on imported scanner evidence
-and reachability is `unknown`. A triage decision is not a substitute for
-authorized human review.
+expected and are useful recall evidence. Council/deliberation is the validity
+gate: its verdicts retain, refute, dispute, or otherwise classify candidates
+before the normal triage path. Triage receives retained `confirmed` findings
+and prioritizes them for the operational queue; it does not decide whether the
+original scanner candidate is a false positive. False-positive and out-of-scope
+quality-finding counts and their evidence remain available in JSON/SARIF
+properties and the full triage sidecar. A `confirmed` status is the workflow's
+retained-for-remediation state. It is not a universal claim that the scanner
+record is factually or source-level proven. Imported SonarQube `CODE_SMELL`
+records are classified as `out_of_scope`, not as false positives: the original
+Sonar finding may be valid, but it is not a security remediation item. For
+report-only imports, the queue is based on imported scanner evidence and
+reachability is `unknown`. A triage decision is not a substitute for authorized
+human review.
 The adjustments described here are triage correction mechanisms. They are not
 runtime safety controls, execution blockers, or security approval gates.
 

@@ -16,7 +16,7 @@ GitHub release, or install the source checkout:
 python -m venv .venv
 .venv\Scripts\activate      # Windows
 source .venv/bin/activate   # macOS/Linux
-python -m pip install path/to/trident-0.3.2-py3-none-any.whl
+python -m pip install path/to/trident-0.3.3-py3-none-any.whl
 ```
 
 From a source checkout:
