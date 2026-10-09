@@ -3,7 +3,7 @@
 Exit codes:
   0  clean (no findings at or above --severity-gate tier)
   1  findings found at or above --severity-gate tier
-  2  scan error (ingest failed, unhandled exception)
+  2  scan error or incomplete review (untriaged/unresolved findings)
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import asyncio
 import json
 import os
 import sys
-from collections import Counter
 from pathlib import Path
 
 import click
@@ -98,11 +97,19 @@ async def _run_scan(
             job = db.get(Job, job_id)
             unresolved = db.query(Finding).filter(
                 Finding.job_id == job_id,
-                Finding.status.in_(("unresolved", "unresolved_model_error", "unreviewed")),
+                Finding.status.in_(_UNRESOLVED_FINDING_STATUSES),
             ).count()
-            if job and unresolved and job.status != JobStatus.failed.value:
+            untriaged = db.query(Finding).filter(
+                Finding.job_id == job_id,
+                Finding.status == "confirmed",
+                Finding.priority.is_(None),
+            ).count()
+            if job and (unresolved or untriaged) and job.status != JobStatus.failed.value:
                 job.status = JobStatus.completed_with_unresolved.value
-                job.error = f"{unresolved} finding(s) remain unresolved; no fail-open verdict was assigned"
+                job.error = (
+                    f"{untriaged} finding(s) remain untriaged and "
+                    f"{unresolved} remain unresolved; review is incomplete"
+                )
                 db.commit()
         return True
     finally:
@@ -123,56 +130,26 @@ async def _run_scan(
                 pass
 
 
-def _render_table(findings: list, name: str, actions: list[dict] | None = None) -> str:
-    counts: Counter = Counter(f.priority or "??" for f in findings)
-    lines = [
-        f"Trident Scan - {name}",
-        "-" * 62,
-        f"  {'Tier':<5}| {'Count':>5} | Sample",
-        "-" * 62,
-    ]
-    for tier in ("P0", "P1", "P2", "P3", "P4"):
-        n = counts.get(tier, 0)
-        sample = next(
-            (
-                f"{f.title[:44]}  ({Path(f.file or '').name}:{f.line_start})"
-                for f in findings
-                if f.priority == tier
-            ),
-            "-",
-        )
-        lines.append(f"  {tier:<5}| {n:>5} | {sample}")
-    basis_counts: Counter = Counter(
-        (getattr(f, "triage", None) or {}).get("evidence_basis") or "unknown"
-        for f in findings
-    )
-    basis_text = ", ".join(f"{basis}={count}" for basis, count in basis_counts.items()) or "none"
-    lines += [
-        "-" * 62,
-        f"  Total confirmed: {len(findings)}",
-        f"  Retained for remediation: {len(findings)}",
-        f"  Evidence basis: {basis_text}",
-        "",
-        "Triage plan:",
-    ]
-    if actions is not None:
-        lines.extend(["", f"Remediation actions: {len(actions)}"])
-        for action in actions:
-            label = " ".join(filter(None, [action.get("package"), action.get("version")]))
-            label = label or action.get("action_id", "")
-            lines.append(
-                f"  {action.get('action_id')} | {label} | "
-                f"highest={action.get('highest_priority') or 'untriaged'} | "
-                f"occurrences={action.get('occurrence_count', 0)}"
-            )
-        lines.append("")
-    from trident.triage import PLAYBOOK
-    for tier in ("P0", "P1", "P2", "P3", "P4"):
-        playbook = PLAYBOOK[tier]
-        lines.append(
-            f"  {tier}: {counts.get(tier, 0)} | {playbook['label']} | SLA: {playbook['sla']}"
-        )
-        lines.append(f"       {playbook['how']}")
+_UNRESOLVED_FINDING_STATUSES = ("unresolved", "unresolved_model_error", "unreviewed")
+
+
+def _render_table(report: dict, name: str) -> str:
+    """Render a compact summary directly from the finalized JSON report data."""
+    triage = report.get("triage") or {}
+    summary = triage.get("summary") or {}
+    counts = summary.get("by_tier") or {}
+    dispositions = (report.get("dispositions") or {}).get("counts") or {}
+    total = sum(int(counts.get(tier, 0) or 0) for tier in _TIER_RANK)
+    untriaged = int(triage.get("untriaged", 0) or 0)
+    unresolved = sum(int(dispositions.get(status, 0) or 0) for status in _UNRESOLVED_FINDING_STATUSES)
+
+    lines = [f"Trident Scan - {name}"]
+    lines.extend(f"{tier}: {int(counts.get(tier, 0) or 0)}" for tier in _TIER_RANK)
+    lines.extend((
+        f"Total: {total}",
+        f"Untriaged: {untriaged}",
+        f"Unresolved: {unresolved}",
+    ))
     return "\n".join(lines)
 
 
@@ -192,7 +169,7 @@ def cli():
     """Trident - AI-assisted code security analysis engine.
 
     Runs 12 scanner tools (SAST, SCA, secrets), then an AI council of security
-    experts reviews every finding. Three guards (class, corpus, reachability)
+    relevant domain experts review findings. Three guards (class, corpus, reachability)
     automatically correct severity over- and under-escalations.
 
     \b
@@ -206,7 +183,7 @@ def cli():
     \b
     Optional alternative backends:
       trident config set llm.backend openai
-      trident config set llm.openai_api_key sk-...
+      set OPENAI_API_KEY in the environment for an OpenAI-compatible backend
       trident config set llm.backend anthropic
 
     \b
@@ -234,7 +211,8 @@ def cli():
       tools      all 12 scanner tools explained
 
     \b
-    Exit codes: 0 = clean  |  1 = findings at/above severity gate  |  2 = scan error
+    Exit codes: 0 = complete and below gate  |  1 = prioritized finding at gate
+                2 = scan failure or incomplete review (untriaged/unresolved)
     """
 
 
@@ -351,7 +329,7 @@ def inspect(report: str, mapping_path: str | None, write_mapping: str | None,
     type=click.Choice(["table", "sarif", "json"]),
     default=None,
     show_default=True,
-    help="Output format: table (default), sarif, json.",
+    help="Output format: table (default; P0-P4 counts), sarif, json.",
 )
 @click.option(
     "--output", "-o",
@@ -389,9 +367,9 @@ def inspect(report: str, mapping_path: str | None, write_mapping: str | None,
     "--backend",
     type=click.Choice(["ollama", "openai", "anthropic"]),
     default=None,
-    help="LLM provider. Overrides config and env.",
+    help="LLM provider, including an OpenAI-compatible /v1 gateway. Overrides config and env.",
 )
-@click.option("--model", default=None, help="LLM model name. Overrides config and env.")
+@click.option("--model", default=None, help="Model alias for all scan LLM roles. Overrides config and env.")
 @click.option("--target-name", default=None, help="Display name for this scan target.")
 @click.option("--max-iterations", default=None, type=int, help="Override max scan iterations.")
 @click.option("--quiet", "-q", is_flag=True, default=False, help="Suppress progress output.")
@@ -429,7 +407,8 @@ def scan(
     a git URL (https:// or git@), or a .zip archive path.
     With --input-file, scanner subprocesses are not run.
 
-    Exit codes: 0 = clean, 1 = findings at/above severity gate, 2 = scan error.
+    Exit codes: 0 = complete and below gate, 1 = prioritized findings at/above
+    severity gate, 2 = scan failure or incomplete review (untriaged/unresolved).
 
     \b
     Examples:
@@ -437,13 +416,17 @@ def scan(
       trident scan --input-file sonar.json
       trident scan --input-file sonar.json --input-file dependency-check.json
       trident scan . --format sarif > results.sarif
-      trident scan ./myrepo --backend openai --model gpt-4o
+      trident scan ./myrepo --backend openai --model security-expert
       trident scan ./myrepo --severity-gate critical
-      OPENAI_API_KEY=sk-... trident scan . --backend openai --format sarif
+      OPENAI_BASE_URL=http://127.0.0.1:8000/v1 trident scan . --backend openai --format sarif
+
+    The default table prints P0-P4 counts, their prioritized total, and
+    separate untriaged and unresolved counts. Full finding evidence stays in
+    JSON and SARIF reports.
     """
     from trident.config import settings
     from trident.db import db_session, engine
-    from trident.models import Base, Finding, Job
+    from trident.models import Base, Job
 
     workspace = workspace or "."
     if scanner_corpus and input_files:
@@ -483,11 +466,15 @@ def scan(
         except Exception:
             fail_on_tier = "P1"
 
-    # Apply backend/model overrides to environment (picked up by get_llm_backend)
+    # Apply the CLI provider override to the process settings before the scan
+    # worker constructs its lazy LLM backend.
     if backend:
-        os.environ["LLM_BACKEND"] = backend
+        settings.llm.backend = backend
     if model:
-        os.environ["EXPERT_MODEL"] = model
+        settings.llm.default_model = model
+        settings.llm.judge_model = model
+        settings.llm.redteam_model = model
+        settings.llm.triage_model = model
 
     # Load quiet from config if not set via flag
     if not quiet:
@@ -505,7 +492,18 @@ def scan(
     else:
         source_type, source_ref = _detect_source(workspace)
         name = target_name or Path(workspace).name or workspace
+    if source_type == "git":
+        from trident.ingest.pipeline import _validate_git_source_ref
+
+        try:
+            _validate_git_source_ref(source_ref)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="WORKSPACE") from None
     profile: dict = {}
+    if model:
+        # The job-level model override applies to every council role, including
+        # the judge and Red-Team, and therefore takes precedence over role config.
+        profile["model"] = model
     if scanner_corpus:
         profile["scanner_corpus"] = str(Path(scanner_corpus).resolve())
     if input_files:
@@ -573,23 +571,18 @@ def scan(
         sys.exit(2)
 
     with db_session() as db:
-        confirmed = (
-            db.query(Finding)
-            .filter(Finding.job_id == job_id, Finding.status == "confirmed")
-            .order_by(Finding.priority.asc().nullslast(), Finding.created_at.asc())
-            .all()
-        )
-
+        # Build the reportable JSON representation once. The table summary and
+        # severity gate consume this finalized population, so their eligibility
+        # and priority counts cannot drift from the machine-readable report.
+        from trident.reporters.exporters import to_json, to_sarif
+        report_data = to_json(db, job_id)
+        confirmed = report_data["findings"]
         if resolved_format == "sarif":
-            from trident.reporters.exporters import to_sarif
             payload = json.dumps(to_sarif(db, job_id), indent=2)
         elif resolved_format == "json":
-            from trident.reporters.exporters import to_json
-            payload = json.dumps(to_json(db, job_id), indent=2)
+            payload = json.dumps(report_data, indent=2)
         else:
-            from trident.reporters.exporters import _remediation_actions
-            payload = _render_table(confirmed, name,
-                                    _remediation_actions(db, job_id, confirmed))
+            payload = _render_table(report_data, name)
 
         triage_payload = None
         if triage_output_file:
@@ -607,8 +600,9 @@ def scan(
 
     threshold = _TIER_RANK.get(fail_on_tier, 1)
     blocker_count = sum(
-        1 for f in confirmed
-        if f.priority and _TIER_RANK.get(f.priority, 99) <= threshold
+        1 for finding in confirmed
+        if finding.get("priority")
+        and _TIER_RANK.get(finding["priority"], 99) <= threshold
     )
 
     if output_file:
@@ -626,15 +620,31 @@ def scan(
                 err=True,
             )
 
-    # An unresolved model decision is a scan-integrity error, not an ordinary
-    # severity-gate finding.  Check it before the P-tier gate so exit status
-    # cannot misrepresent a degraded result as a normal security failure.
+    # Incomplete triage/model review is a scan-integrity error, not an ordinary
+    # severity-gate finding. Check it before the P-tier gate so exit status
+    # cannot misrepresent an incomplete result as an ordinary clean/gated scan.
     with db_session() as db:
         from trident.models import Job
         final_job = db.get(Job, job_id)
-        if final_job and final_job.status == "completed_with_unresolved":
+        triage_summary = report_data.get("triage") or {}
+        untriaged = int(triage_summary.get("untriaged", 0) or 0)
+        dispositions = (report_data.get("dispositions") or {}).get("counts") or {}
+        unresolved = sum(
+            int(dispositions.get(status, 0) or 0)
+            for status in _UNRESOLVED_FINDING_STATUSES
+        )
+        review_incomplete = bool(
+            untriaged
+            or unresolved
+            or (final_job and final_job.status == "completed_with_unresolved")
+        )
+        if review_incomplete:
             if not quiet:
-                click.echo("[trident] unresolved model decisions remain - exit 2", err=True)
+                click.echo(
+                    f"[trident] review incomplete: {untriaged} untriaged, "
+                    f"{unresolved} unresolved - exit 2",
+                    err=True,
+                )
             sys.exit(2)
 
     if blocker_count:
@@ -702,23 +712,55 @@ def config():
 
 @config.command("set")
 @click.argument("key")
-@click.argument("value")
-def config_set(key: str, value: str):
-    """Set KEY to VALUE in the config file.
+@click.argument("value", required=False)
+@click.option("--stdin", "read_stdin", is_flag=True,
+              help="Read the value from standard input instead of a command-line argument.")
+def config_set(key: str, value: str | None, read_stdin: bool):
+    """Set KEY in the config file.
 
     \b
     Examples:
       trident config set llm.backend openai
-      trident config set llm.openai_api_key sk-...
+      trident config set llm.openai_api_key
+      trident config set llm.openai_api_key --stdin < credential.txt
       trident config set scan.severity_gate high
       trident config set scan.max_iterations 5
+
+    Secret values are entered through a hidden prompt or read from stdin. They
+    are never accepted as positional command-line arguments.
     """
     from trident import config_manager
+    schema = config_manager.CONFIG_SCHEMA.get(key)
+    is_secret = bool(schema and schema.get("secret"))
     try:
+        if read_stdin:
+            if value is not None:
+                raise ValueError("Provide either VALUE or --stdin, not both.")
+            value = click.get_text_stream("stdin").readline().rstrip("\r\n")
+            if not value:
+                raise ValueError("No value was read from standard input.")
+        elif is_secret:
+            if value is not None:
+                raise ValueError(
+                    "Secret values cannot be passed as command-line arguments; "
+                    "omit VALUE for a hidden prompt or use --stdin."
+                )
+            value = click.prompt(f"Enter {key}", hide_input=True, confirmation_prompt=True)
+        elif value is None:
+            raise ValueError("VALUE is required for this configuration key.")
+
         config_manager.set_value(key, value)
-        click.echo(f"[trident] {key} = {value!r}")
-    except ValueError as e:
-        click.echo(f"[trident] error: {e}", err=True)
+        if is_secret:
+            click.echo(f"[trident] {key} updated (value hidden)")
+        else:
+            click.echo(f"[trident] {key} = {value!r}")
+    except (ValueError, OSError) as e:
+        # Configuration validation errors must not echo credential material.
+        message = (
+            "secret configuration value was rejected or could not be stored securely"
+            if is_secret else str(e)
+        )
+        click.echo(f"[trident] error: {message}", err=True)
         raise SystemExit(1)
 
 
@@ -729,9 +771,13 @@ def config_get(key: str):
     from trident import config_manager
     try:
         value, source = config_manager.get(key)
+        schema = config_manager.CONFIG_SCHEMA[key]
+        if schema.get("secret") and value:
+            value = "********"
         click.echo(f"{value}  [{source}]")
-    except ValueError as e:
-        click.echo(f"[trident] error: {e}", err=True)
+    except (ValueError, OSError) as e:
+        message = "configuration could not be read securely" if isinstance(e, OSError) else str(e)
+        click.echo(f"[trident] error: {message}", err=True)
         raise SystemExit(1)
 
 
@@ -739,7 +785,11 @@ def config_get(key: str):
 def config_show():
     """Show all configuration values with their sources."""
     from trident import config_manager
-    values = config_manager.all_values()
+    try:
+        values = config_manager.all_values()
+    except OSError:
+        click.echo("[trident] error: configuration could not be read securely", err=True)
+        raise SystemExit(1)
     col1 = max(len(v["key"]) for v in values) + 2
     col2 = 40
     click.echo(f"\n  {'Key':<{col1}} {'Value':<{col2}} Source")
@@ -752,7 +802,7 @@ def config_show():
             last_section = section
         display = v["value"]
         if v["secret"] and display:
-            display = display[:4] + "***" + display[-2:] if len(str(display)) > 8 else "***"
+            display = "********"
         click.echo(f"  {v['key']:<{col1}} {str(display):<{col2}} [{v['source']}]")
     click.echo("")
 
@@ -771,7 +821,10 @@ def config_list():
         if section != last_section:
             click.echo("")
             last_section = section
-        default = repr(schema["default"]) if isinstance(schema["default"], (bool, int)) else schema["default"]
+        if schema.get("secret"):
+            default = "(empty)" if not schema["default"] else "********"
+        else:
+            default = repr(schema["default"]) if isinstance(schema["default"], (bool, int)) else schema["default"]
         click.echo(f"  {key:<{col_key}} {str(default):<{col_default}} {schema['description']}")
     click.echo("")
 
@@ -808,9 +861,11 @@ def config_edit():
     """Open the config file in $EDITOR."""
     from trident import config_manager
     p = config_manager.config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
+    from trident.storage_security import atomic_write_private, secure_directory
+
+    secure_directory(p.parent, force=True)
     if not p.exists():
-        p.write_text("# Trident configuration\n")
+        atomic_write_private(p, b"# Trident configuration\n")
     editor = os.environ.get("EDITOR", "notepad" if sys.platform == "win32" else "vi")
     os.execlp(editor, editor, str(p))
 

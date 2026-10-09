@@ -23,6 +23,7 @@ except ImportError:
     import tomli as tomllib  # type: ignore[no-reuse-def]
 
 import tomli_w
+from trident.storage_security import atomic_write_private, secure_directory, secure_file
 
 
 # ---------------------------------------------------------------------------
@@ -33,9 +34,10 @@ CONFIG_SCHEMA: dict[str, dict] = {
     # LLM backend
     "llm.backend": {
         "default": "ollama",
-        "description": "LLM provider: ollama, openai, anthropic",
+        "description": "LLM provider: ollama, openai (including compatible gateways), anthropic",
         "valid": ["ollama", "openai", "anthropic"],
-        "env": "LLM_BACKEND",
+        "env": "TRIDENT_LLM_BACKEND",
+        "env_aliases": ["LLM_BACKEND"],
     },
     "llm.base_url": {
         "default": "http://127.0.0.1:11434",
@@ -55,9 +57,16 @@ CONFIG_SCHEMA: dict[str, dict] = {
     },
     "llm.openai_api_key": {
         "default": "",
-        "description": "OpenAI API key (or set env OPENAI_API_KEY)",
+        "description": "OpenAI-compatible API key (or set env OPENAI_API_KEY)",
         "env": "OPENAI_API_KEY",
+        "env_aliases": ["TRIDENT_OPENAI_API_KEY"],
         "secret": True,
+    },
+    "llm.openai_base_url": {
+        "default": "https://api.openai.com/v1",
+        "description": "OpenAI-compatible API base URL, including /v1",
+        "env": "OPENAI_BASE_URL",
+        "env_aliases": ["TRIDENT_OPENAI_BASE_URL"],
     },
     "llm.anthropic_api_key": {
         "default": "",
@@ -69,11 +78,19 @@ CONFIG_SCHEMA: dict[str, dict] = {
         "default": "nemotron-3-super:cloud",
         "description": "Model for expert reviewers",
         "env": "TRIDENT_OLLAMA_MODEL",
+        "env_aliases": ["EXPERT_MODEL"],
     },
     "llm.judge_model": {
         "default": "",
         "description": "Model for the judge (blank = same as expert)",
-        "env": "JUDGE_MODEL",
+        "env": "TRIDENT_JUDGE_MODEL",
+        "env_aliases": ["JUDGE_MODEL"],
+    },
+    "llm.redteam_model": {
+        "default": "",
+        "description": "Model for Red-Team analysis (blank = same as expert)",
+        "env": "TRIDENT_REDTEAM_MODEL",
+        "env_aliases": ["REDTEAM_MODEL"],
     },
     "llm.secondary_model": {
         "default": "qwen3.5:cloud",
@@ -134,18 +151,24 @@ def _load_file() -> dict:
     p = _config_path()
     if not p.exists():
         return {}
+    # Do not silently ignore permission failures: a configuration containing
+    # credentials must not be read from a path whose ACL cannot be hardened.
+    # Always recheck the path type to reject symlink swaps. On Windows, the
+    # ACL helper memoizes an unchanged filesystem object so config reads do not
+    # spawn icacls for every get/list operation; writes reapply ACLs atomically.
+    secure_directory(p.parent)
+    secure_file(p)
     try:
         with p.open("rb") as f:
             return tomllib.load(f)
-    except Exception:
+    except (ValueError, tomllib.TOMLDecodeError):
         return {}
 
 
 def _save_file(data: dict) -> None:
     p = _config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("wb") as f:
-        tomli_w.dump(data, f)
+    payload = tomli_w.dumps(data).encode("utf-8")
+    atomic_write_private(p, payload)
 
 
 def _get_nested(data: dict, section: str, key: str) -> Any:
@@ -194,9 +217,10 @@ def get(dotted: str) -> tuple[Any, str]:
     section, key = dotted.split(".", 1)
 
     # Env var overrides config file
-    env_key = schema.get("env")
-    if env_key and os.environ.get(env_key):
-        return _coerce(dotted, os.environ[env_key]), "env"
+    env_keys = [schema.get("env"), *schema.get("env_aliases", [])]
+    for env_key in env_keys:
+        if env_key and os.environ.get(env_key):
+            return _coerce(dotted, os.environ[env_key]), "env"
 
     # Config file
     file_data = _load_file()

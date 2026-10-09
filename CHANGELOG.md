@@ -3,6 +3,58 @@
 This file records user-visible changes to the Trident CLI. It follows the
 general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+
+- Generic OpenAI-compatible `/v1` gateway support through persisted settings,
+  environment variables, and scan CLI overrides. Configured model aliases are
+  sent unchanged.
+- Deterministic expert-routing decisions that preserve the original tool, CWE,
+  and keyword matcher as a compatibility floor, while structured evidence can
+  add domain reviewers. Decisions expose their scores and reasons and preserve
+  multi-expert review.
+- Exact Red-Team model-input fingerprints with stable finding selection. A
+  successful identical input reuses persisted attack-chain results; changed
+  visible input triggers fresh analysis.
+
+### Changed
+
+- Runtime LLM settings now honor CLI, environment, persisted config, then
+  defaults, including the OpenAI-compatible endpoint, API key, and role models.
+- Expert routing uses `legacy_match OR structured_match`; structured routing
+  cannot suppress a legacy reviewer, and reduced call counts are not required.
+- API keys set through `config set` use a hidden prompt or stdin, command-line
+  secret values are rejected, and secret output from `config get/show` is masked.
+- Changed Red-Team input clears stale attack chains before budget checks. If no
+  LLM call is available, the new input is reported as `unavailable_budget`.
+- The default terminal report is a numerical P0-P4 summary with explicit zero,
+  untriaged, and unresolved counts. Summary counts and severity-gate eligibility
+  now consume the finalized JSON report population.
+- An incomplete review with confirmed-but-untriaged or unresolved findings now
+  exits 2. This closes the previous fail-open case where an untriaged confirmed
+  finding could yield exit 0 below the configured priority gate.
+- Local config and SQLite files are written atomically with restrictive
+  permissions; the default Trident data directory is private. A PostgreSQL
+  password is required instead of relying on a shipped development password.
+- OpenAI-compatible bearer keys are not sent to redirects. Remote gateways
+  require HTTPS; cleartext HTTP is limited to loopback addresses.
+- User ZIP and downloaded runtime archives reject traversal and links and are
+  bounded by member-count and expanded-size limits. Git errors no longer emit
+  raw remote output, and credential-bearing Git URL forms are rejected.
+- The GitHub Actions release build runs with read-only contents permissions;
+  write permission is isolated to the release-publication job.
+- The development package version is `0.3.4.dev0`; the published v0.3.3
+  release remains the latest public artifact.
+
+### Security
+
+- Runtime expert assignments increased by 3 in the accepted comparison
+  (44 legacy invocations, 47 corrected). Routing preserves legacy eligibility;
+  no call-savings claim is made.
+- The local gateway was exercised through an installed wheel. No external
+  provider acceptance test was performed.
+
 ## [0.3.3] - 2026-09-17
 
 This release supersedes the withdrawn v0.3.0 and v0.3.1 releases and the

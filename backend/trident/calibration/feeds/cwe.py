@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import io
-import xml.etree.ElementTree as ET
 import zipfile
 
+from defusedxml import ElementTree as ET
 import httpx
 from loguru import logger
 
@@ -14,6 +14,24 @@ from trident.calibration.feeds.base import BaseFetcher
 
 _CWE_URL = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip"
 _NS = "{http://cwe.mitre.org/cwe-7}"
+
+
+def _parse_cwe_xml(xml_bytes: bytes) -> list[tuple[str, str, str | None]]:
+    """Parse CWE taxonomy XML while rejecting DTD and entity declarations."""
+    root = ET.fromstring(xml_bytes)
+    rows = []
+    for weakness in root.findall(f".//{_NS}Weakness"):
+        cwe_id = f"CWE-{weakness.get('ID')}"
+        name = weakness.get("Name", "")
+        parent = None
+        related = weakness.find(f"{_NS}Related_Weaknesses")
+        if related is not None:
+            for relation in related.findall(f"{_NS}Related_Weakness"):
+                if relation.get("Nature") == "ChildOf":
+                    parent = f"CWE-{relation.get('CWE_ID')}"
+                    break
+        rows.append((cwe_id, name, parent))
+    return rows
 
 
 class CWEFetcher(BaseFetcher):
@@ -33,21 +51,7 @@ class CWEFetcher(BaseFetcher):
                 xml_name = next(n for n in zf.namelist() if n.endswith(".xml"))
                 xml_bytes = zf.read(xml_name)
 
-            root = ET.fromstring(xml_bytes)
-            weaknesses = root.findall(f".//{_NS}Weakness")
-
-            rows = []
-            for w in weaknesses:
-                cwe_id = f"CWE-{w.get('ID')}"
-                name = w.get("Name", "")
-                parent = None
-                related = w.find(f"{_NS}Related_Weaknesses")
-                if related is not None:
-                    for rel in related.findall(f"{_NS}Related_Weakness"):
-                        if rel.get("Nature") == "ChildOf":
-                            parent = f"CWE-{rel.get('CWE_ID')}"
-                            break
-                rows.append((cwe_id, name, parent))
+            rows = _parse_cwe_xml(xml_bytes)
 
             conn.execute("DELETE FROM cwe_tree")
             conn.executemany(

@@ -9,12 +9,13 @@ database.
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
 | CLI entry point | backend/trident/cli.py | Commands, options, exit codes |
-| Configuration | backend/trident/config.py and config_manager.py | Environment and TOML settings |
+| Configuration | backend/trident/config.py and config_manager.py | CLI, environment, TOML, and default settings |
 | Ingest | backend/trident/ingest/ | Local paths, Git URLs, ZIP archives, and report import |
 | Evidence adapters | backend/trident/ingest/registry.py and adapters/ | Deterministic SonarQube, Dependency-Check, SARIF, CycloneDX, and generic JSON mappings |
 | Scanner adapters | backend/trident/tools/ | Invoke scanners and normalize findings |
 | Correlation | backend/trident/correlate.py | Deduplicate corroborating findings |
 | Expert review | backend/trident/experts/ and deliberation.py | LLM council review |
+| Expert routing | backend/trident/experts/routing.py | Preserved legacy OR bounded structured eligibility, scores, and inspectable multi-expert selection |
 | Triage adjustments | backend/trident/triage.py and reachability/ | Deterministic factor correction and reachability evidence |
 | Corpus calibration | backend/trident/calibration/ | Optional vulnerability corpus, CWE profiles, and model artifact |
 | Exporters | backend/trident/reporters/exporters.py | Table, JSON, SARIF, and triage-sidecar output |
@@ -70,15 +71,35 @@ TRIDENT_SQLITE_PATH. The database is intended for one local operator. Avoid
 running concurrent scans against the same database file.
 
 Extracted workspaces are stored separately and cleaned according to
-WORKSPACE_RETENTION_DAYS. Sensitive source, findings, credentials, and model
-data remain on the local filesystem unless an LLM backend is configured to
-receive code context.
+WORKSPACE_RETENTION_DAYS (14 days by default); setting it to zero disables that
+sweep. Finding evidence, original imports, debate text, model responses, and
+decision metadata remain in local databases until an operator removes them.
+The default app-data/config directories and SQLite database/sidecars receive
+restrictive OS permissions, but Trident does not encrypt these files. Credentials
+in TOML remain plaintext to the current user. See [Privacy](PRIVACY.md).
 
 ## LLM boundary
 
 Ollama, OpenAI, and Anthropic backends implement the same LLM interface.
-Cloud backends receive prompts and code excerpts required for review; choose a
-backend that matches the sensitivity of the code being scanned.
+The OpenAI backend supports OpenAI-compatible `/v1` URLs for models, chat
+completions, and embeddings. Base URL, bearer key, role models, and backend
+settings resolve from CLI, environment, persisted config, and defaults in that
+order. Configured model aliases are passed through unchanged. Cloud backends
+receive prompts and code excerpts required for review; choose a backend that
+matches the sensitivity of the code being scanned.
+
+Prompts may contain scanner evidence and source excerpts. Provider and gateway
+retention are outside Trident's control. For remote OpenAI-compatible endpoints
+the URL must use HTTPS; cleartext HTTP is limited to loopback, and redirects
+are disabled.
+
+Red-Team selection sorts confirmed findings by severity, path, line, and ID
+before applying its bound. It fingerprints the exact model-visible messages.
+Successful exact duplicates keep their persisted attack chains and consume no
+additional model-call budget; changed input invalidates old chains before a
+new call is budgeted. If the budget is exhausted, the current input is marked
+`unavailable_budget` and stale chains are absent from database state and
+reports. Failed responses are not recorded as successful cache entries.
 
 ## Package boundary
 

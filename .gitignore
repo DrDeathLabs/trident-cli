@@ -11,10 +11,17 @@ venv/
 .wsl-smoke-venv*/
 .ci-venv/
 .pytest-tmp/
+.pytest-tmp*/
 .ruff_cache/
 .mypy_cache/
+.pyright/
+.tox/
+.nox/
+.pyre/
 .coverage
 htmlcov/
+node_modules/
+pip-wheel-metadata/
 
 # Local release validation data
 .acceptance/
@@ -23,6 +30,8 @@ validation/
 release-audit/
 *_RELEASE_HANDOFF.md
 *_release_handoff.md
+/TRIDENT_RELEASE_READINESS_AUDIT.md
+/trident-release-readiness-acceptance.zip
 benchmark/
 benchmarks/
 evidence/

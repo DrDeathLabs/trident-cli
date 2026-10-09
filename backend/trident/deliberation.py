@@ -35,8 +35,9 @@ from trident.budget import LLMBudget
 from trident.config import settings
 from trident.events.publisher import EventType, publish_event
 from trident.experts.judge import JudgeExpert
+from trident.experts.routing import route_finding
 from trident.models import (
-    SEVERITY_RANK, AttackChain, Finding, FindingVerdict, correlation_key, stable_finding_hash,
+    SEVERITY_RANK, AttackChain, Finding, FindingVerdict, Job, correlation_key, stable_finding_hash,
 )
 from trident.reliability.schemas import ReviewVerdict
 from trident.workspace import iter_workspace_files
@@ -340,7 +341,18 @@ def run_reviews(db: Session, review_experts, judge: JudgeExpert, findings, itera
     if not findings:
         return
 
-    relevant_map = {f.id: [e for e in review_experts if e.is_relevant(f)] for f in findings}
+    relevant_map = {}
+    for finding in findings:
+        decisions = route_finding(finding, review_experts)
+        by_name = {expert.name: expert for expert in review_experts}
+        relevant_map[finding.id] = [
+            by_name[decision.expert] for decision in decisions if decision.relevant
+        ]
+        publish_event(db, finding.job_id, EventType.EXPERT_ROUTING, {
+            "finding_id": finding.id,
+            "iteration": iteration,
+            "decisions": [decision.as_dict() for decision in decisions],
+        })
 
     # ---- Phase A: independent parallel reviews (always single-shot) ----
     # Selective agentic: Phase A stays cheap single-shot on every finding; tool
@@ -593,24 +605,77 @@ def collect_novel(db: Session, experts, job_id: str, workspace: str, iteration: 
 
 def build_attack_chains(db: Session, job_id: str, redteam, confirmed: list[Finding],
                         iteration: int, budget: LLMBudget) -> None:
-    """Ask the red team to chain confirmed findings; persist AttackChains + per-finding paths."""
-    if not confirmed or not budget.take(1):
+    """Run Red-Team for changed model input, preserving successful duplicate output."""
+    job = db.get(Job, job_id)
+    if job is None:
         return
-    res = redteam.invoke_chains(confirmed, iteration=iteration)
+    model_input = redteam.build_model_input(confirmed)
+    prior = (job.profile or {}).get("_redteam_analysis", {})
+    prior_fingerprint = prior.get("fingerprint") if isinstance(prior, dict) else None
+    if prior_fingerprint == model_input["fingerprint"] and prior.get("status") == "success":
+        publish_event(db, job_id, EventType.REDTEAM_REUSED, {
+            "iteration": iteration,
+            "fingerprint": model_input["fingerprint"],
+            "selected_finding_ids": model_input["selected_finding_ids"],
+            "budget_calls_used": 0,
+        })
+        return
+    if not confirmed and not prior_fingerprint:
+        return
+
+    # Invalidate previous analysis before checking the budget. Once the model-
+    # visible input changes, old chains are no longer valid for the current
+    # state, even when this scan cannot afford a new Red-Team call.
+    updated_profile = dict(job.profile or {})
+    updated_profile["_redteam_analysis"] = {
+        "fingerprint": model_input["fingerprint"],
+        "status": "unavailable_budget",
+        "paths": 0,
+    }
+    job.profile = updated_profile
+    for previous_chain in db.query(AttackChain).filter(AttackChain.job_id == job_id).all():
+        db.delete(previous_chain)
+    for finding in db.query(Finding).filter(Finding.job_id == job_id).all():
+        if finding.attack_paths:
+            finding.attack_paths = []
+
+    if not budget.take(1):
+        db.flush()
+        publish_event(db, job_id, "redteam.analysis.unavailable", {
+            "iteration": iteration,
+            "fingerprint": model_input["fingerprint"],
+            "selected_finding_ids": model_input["selected_finding_ids"],
+            "reason": "llm_budget_exhausted",
+            "budget_calls_used": 0,
+        })
+        return
+
+    # Do not present the provisional unavailable state while a call is running.
+    updated_profile = dict(job.profile or {})
+    updated_profile.pop("_redteam_analysis", None)
+    job.profile = updated_profile
+
+    res = redteam.invoke_chains(
+        confirmed, iteration=iteration, model_input=model_input,
+    )
     budget.used += max(0, getattr(res, "llm_calls", 1) - 1)
     if not getattr(res, "ok", False):
         return
     by_id = {f.id: f for f in confirmed}
     per_finding: dict[str, list[dict]] = {}
     chain_basis = "source_grounded" if redteam.workspace else "report_derived"
+    persisted_chains = 0
     for path in res.obj.attack_paths:
         used = [fid for fid in path.findings_used if fid in by_id]
+        if not used:
+            continue
         chain = AttackChain(
             job_id=job_id, goal=path.goal[:256], steps=path.steps,
             likelihood=path.likelihood, iteration=iteration,
         )
         chain.findings = [by_id[fid] for fid in used]
         db.add(chain)
+        persisted_chains += 1
         path_dict = {
             "goal": path.goal, "steps": path.steps,
             "likelihood": path.likelihood, "findings_used": used,
@@ -619,9 +684,17 @@ def build_attack_chains(db: Session, job_id: str, redteam, confirmed: list[Findi
         for fid in used:
             per_finding.setdefault(fid, []).append(path_dict)
     # Each confirmed finding carries only the paths it actually participates in.
-    for fid, paths in per_finding.items():
-        by_id[fid].attack_paths = paths
+    for finding in confirmed:
+        finding.attack_paths = per_finding.get(finding.id, [])
+    job.profile = {
+        **(job.profile or {}),
+        "_redteam_analysis": {
+            "fingerprint": model_input["fingerprint"],
+            "status": "success",
+            "paths": persisted_chains,
+        },
+    }
     db.flush()
     publish_event(db, job_id, EventType.REDTEAM_CHAIN, {
-        "chains": len(res.obj.attack_paths), "iteration": iteration,
+        "chains": persisted_chains, "iteration": iteration,
     })

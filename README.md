@@ -45,32 +45,41 @@ separate so each decision can be inspected.
 1. **Find candidates.** Twelve scanner adapters establish broad coverage.
 2. **Correlate candidates.** Overlapping alerts are grouped so the COE reviews
    the issue once instead of debating the same problem repeatedly.
-3. **Run the COE.** The relevant domain experts review candidates independently.
+3. **Run the COE.** Deterministic legacy and structured evidence routes
+   candidates to domain experts. Structured evidence can add appropriate
+   reviewers, while the preserved legacy matcher prevents a security review
+   from being removed by a new score threshold. A finding can go to multiple
+   experts when evidence spans domains. Scores and reasons are inspectable.
    Contested findings go through cross-examination. The judge rechecks
    high-severity results and disagreements.
 4. **Look for attack chains.** The red-team reviewer examines the confirmed
-   findings together. If separate weaknesses form a credible attack path, the
-   chain is recorded and its findings can be raised one priority tier.
+   findings together. Exact duplicate model-visible input reuses its prior
+   attack-chain analysis; changed evidence triggers a fresh analysis. If separate
+   weaknesses form a credible attack path, the chain is recorded and its findings
+   can be raised one priority tier.
 5. **Triage confirmed findings.** The triage pass assesses impact, attack vector,
    exploitability, fix effort, and reachability. Deterministic logic applies the
    rubric and evidence-based adjustments, then assigns P0-P4.
 6. **Export the result.** Reports contain the confirmed findings, priority,
    rationale, attack-chain context, and the evidence behind each decision.
 
-The result is a worked remediation queue, not just a list of alerts. Each
-confirmed finding carries its priority, rationale, factors, reachability
+The result is a worked remediation queue, not just a list of alerts. Expert
+routing is deterministic and combines the preserved legacy matcher with
+structured evidence using logical OR. Structured scores and reasons can add
+experts, while multi-domain findings can reach multiple reviewers. This
+compatibility rule can retain broad legacy keyword matches, so no expert-call
+savings are claimed; the corrected acceptance comparison added three expert
+invocations (44 to 47) while preserving confirmed findings and priorities.
+
+Each confirmed finding carries its priority, rationale, factors, reachability
 context, and recommended action. Findings that are rejected remain available as
 review evidence, so the queue can be acted on without losing the decision trail.
 SARIF works with code-scanning workflows, JSON supports automation, table output
 is useful at the terminal, and the triage sidecar preserves the complete record.
 
-In one 215-finding PyGoat evaluation, the documented deterministic correction
-changed the P0-P4 shape from a scanner/model-driven barbell (47 P0 findings) to
-a graded queue with 13 P0 findings. That snapshot also reached exact expert-tier
-agreement on 8 of 10 detected planted findings and agreement within one tier on
-all 10. These are Trident evaluation results, not universal performance claims;
-see the [full triage evaluation snapshot](docs/TRIAGE.md#evaluation-snapshot-from-alert-barbell-to-worked-queue)
-for scope and limitations.
+The current [validation summary](docs/VALIDATION.md) describes the controlled
+fixtures and local acceptance scope. Those results do not establish universal
+detection efficacy or validate an external model provider.
 
 Trident is not an autonomous security approval system. Model output is input to
 the review process, and high-impact results still require qualified human review.
@@ -131,7 +140,31 @@ as disposition evidence rather than being silently discarded.
   cross-examination, red-team attack-chain analysis, reachability analysis, and
   automatic evidence-preserving P0-P4 triage.
 - Local SQLite state with no network service required by the CLI itself.
-- Configurable Ollama, OpenAI, or Anthropic review backends.
+- Configurable Ollama, OpenAI-compatible, or Anthropic review backends.
+
+## OpenAI-compatible gateways
+
+Use any gateway that implements the OpenAI-compatible `/v1/models`,
+`/v1/chat/completions`, and `/v1/embeddings` endpoints. Set a custom base URL
+and model alias through config or environment; Trident sends the alias exactly
+as configured.
+
+```bash
+trident config set llm.backend openai
+trident config set llm.openai_base_url http://127.0.0.1:8000/v1
+trident config set llm.expert_model security-expert
+trident config set llm.openai_api_key
+trident scan . --backend openai --model security-expert
+```
+
+API keys are entered through a hidden prompt, read from `--stdin`, or supplied
+through `OPENAI_API_KEY`. `config get` and `config show` mask secrets, and
+secret values passed as command-line arguments are rejected.
+
+`OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`; a trailing slash is
+optional. LLM settings resolve in this order: CLI flags, environment variables,
+persisted config, then defaults. `--model` applies to the scan's expert, judge,
+Red-Team, and triage calls.
 
 ## Install and run
 
@@ -190,6 +223,12 @@ trident scan . --format json --output-file results.json \
   --triage-output-file triage.json
 ```
 
+The default terminal table is a numerical summary: it prints every P0-P4 tier,
+including zero counts, the total of prioritized findings, and separate counts
+for confirmed-but-untriaged and unresolved findings. These counts come from the
+same finalized finding population used by the JSON report. Detailed evidence,
+review explanations, and remediation remain in JSON and SARIF.
+
 The primary JSON and SARIF reports include compact triage metadata. The
 `--triage-output-file` option writes the full worked queue with P0-P4 groups,
 playbooks, SLAs, factors, rationale, attack-chain context, and analyst
@@ -199,9 +238,15 @@ Exit codes are stable for automation:
 
 | Code | Meaning |
 | --- | --- |
-| `0` | No retained finding at or above the configured gate. |
-| `1` | At least one retained finding is at or above the configured gate. |
-| `2` | Scan or ingestion error. |
+| `0` | Review completed; no prioritized confirmed finding is at or above the gate. |
+| `1` | At least one prioritized confirmed finding is at or above the gate. |
+| `2` | Scan/ingestion/report error, or confirmed findings remain untriaged or unresolved. |
+
+Exit 2 takes precedence over the priority gate because unresolved or
+untriaged findings mean the review is incomplete. Final unresolved
+disagreements are reported as `unresolved` by the fail-closed convergence
+workflow; suppressed and false-positive records are not included in the P0-P4
+counts.
 
 The repository includes a [SARIF workflow example](trident-scan.yml), a
 [CLI CI workflow](.github/workflows/ci.yml), and a manually invoked package
@@ -218,6 +263,7 @@ not publish on ordinary pushes, pull requests, or tag creation.
 | CI maintainer | [CI and SARIF](docs/CI_CD.md) | [Open-source readiness](docs/OPEN_SOURCE_READINESS.md) |
 | Developer | [Development](docs/DEVELOPMENT.md) | [Architecture](docs/ARCHITECTURE.md) |
 | Security reviewer | [Limitations](docs/LIMITATIONS.md) | [Security policy](SECURITY.md) |
+| Privacy reviewer | [Privacy and data handling](docs/PRIVACY.md) | [Security policy](SECURITY.md) |
 
 See [the full documentation map](docs/README.md), [support guidance](SUPPORT.md),
 and [third-party notices](THIRD-PARTY-NOTICES.md).

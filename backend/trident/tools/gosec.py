@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from trident.models import Severity
 from trident.tools.base import RawFinding, ToolBase, register_tool
+from trident.tools.redaction import is_credential_rule, redacted_credential_raw
 
 SEV_MAP = {"HIGH": Severity.high.value, "MEDIUM": Severity.medium.value, "LOW": Severity.low.value}
 
@@ -32,20 +33,33 @@ class GosecTool(ToolBase):
             cwe = issue.get("cwe", {}).get("id")
             if cwe and str(cwe).isdigit():
                 cwe = f"CWE-{cwe}"
+            rule_id = issue.get("rule_id", "gosec")
+            credential = is_credential_rule(
+                rule_id, issue.get("details"), cwe=cwe,
+            )
             findings.append(RawFinding(
                 tool=self.name,
-                rule_id=issue.get("details", "gosec"),
+                rule_id=rule_id,
                 severity=sev,
                 confidence=0.7,
-                title=issue.get("details", ""),
-                description=issue.get("details", ""),
+                title="Potential credential embedded in source" if credential else issue.get("details", ""),
+                description=(
+                    "A potential credential is present; its value is omitted from Trident output."
+                    if credential else issue.get("details", "")
+                ),
                 file=issue.get("file", ""),
                 line_start=loc,
                 line_end=loc,
-                snippet=issue.get("code", ""),
+                snippet="[REDACTED]" if credential else issue.get("code", ""),
                 cwe=cwe,
-                recommendation=issue.get("details", ""),
-                raw=issue,
+                recommendation=(
+                    "Remove the credential from source, rotate it, and use a secrets manager."
+                    if credential else issue.get("details", "")
+                ),
+                raw=(
+                    redacted_credential_raw(self.name, rule_id, issue.get("file", ""), loc, loc, cwe=cwe)
+                    if credential else issue
+                ),
             ))
         self.persist_findings(db, findings)
         self._emit_complete(db, len(findings), time.time() - t0)

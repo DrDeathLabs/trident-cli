@@ -13,11 +13,12 @@ HELP_TOPICS: dict[str, str] = {
    through the configured Ollama gateway. Configure it explicitly if needed:
    [green]trident config set llm.backend ollama[/green]
    [green]trident config set llm.expert_model nemotron-3-super:cloud[/green]
-4. OpenAI and Anthropic remain optional alternative backends.
+4. OpenAI-compatible gateways and Anthropic remain optional alternative backends.
 5. Scan a local path: [green]trident scan .[/green]
 
 The optional corpus model is built with [green]trident model refresh[/green].
-Exit codes are 0 for clean, 1 for findings at the gate, and 2 for scan errors.
+Exit codes are 0 for complete scans below the gate, 1 for prioritized findings
+at the gate, and 2 for scan failures or untriaged/unresolved review.
 """,
     "backends": """
 [bold cyan]LLM backends[/bold cyan]
@@ -30,13 +31,20 @@ Ollama is the default backend:
 The default model is Ollama Cloud-tagged. The Ollama gateway URL describes the
 transport endpoint; it does not imply that this model runs on the local host.
 
-OpenAI:
+OpenAI-compatible gateway:
   [green]trident config set llm.backend openai[/green]
-  [green]trident config set llm.openai_api_key sk-...[/green]
+  [green]trident config set llm.openai_base_url http://127.0.0.1:8000/v1[/green]
+  [green]trident config set llm.expert_model security-expert[/green]
+  Set [green]OPENAI_API_KEY[/green] in the environment for bearer authentication.
+The gateway implements /v1/models, /v1/chat/completions, and /v1/embeddings.
+OPENAI_BASE_URL defaults to https://api.openai.com/v1. A trailing slash is
+optional, and configured model aliases are passed unchanged. CLI flags take
+precedence over environment variables, config file values, and defaults.
 
 Anthropic:
   [green]trident config set llm.backend anthropic[/green]
-  [green]trident config set llm.anthropic_api_key sk-ant-...[/green]
+  [green]trident config set llm.anthropic_api_key[/green]
+  Enter the key at the hidden prompt, or set ANTHROPIC_API_KEY in the environment.
 
 Cloud backends receive the code context required for review. Choose one that
 matches the sensitivity of the target.
@@ -45,7 +53,8 @@ matches the sensitivity of the target.
 [bold cyan]CI integration[/bold cyan]
 
 Exit codes:
-  0 = clean, 1 = confirmed findings at or above the gate, 2 = scan error
+  0 = complete and below gate, 1 = prioritized finding at/above gate,
+  2 = scan failure or incomplete review (untriaged/unresolved)
 
 Install the package and scanner tools, then write machine-readable output:
   [green]python -m pip install path/to/trident-0.3.3-py3-none-any.whl
@@ -65,7 +74,8 @@ Show, set, and locate configuration:
   [green]trident config path[/green]
 
 Resolution order is CLI flag, environment variable, config file, then default.
-Important keys include llm.backend, llm.base_url, llm.expert_model,
+Important keys include llm.backend, llm.base_url, llm.openai_base_url,
+llm.expert_model, llm.judge_model, llm.redteam_model,
 scan.max_iterations, scan.severity_gate, output.format, and model.data_dir.
 """,
     "output": """
@@ -74,6 +84,11 @@ scan.max_iterations, scan.severity_gate, output.format, and model.data_dir.
 [bold]table[/bold] — terminal summary, selected by default.
 [bold]json[/bold] — retained findings, review evidence, triage metadata, and attack chains.
 [bold]sarif[/bold] — SARIF 2.1.0 for code-scanning integrations.
+
+The default table prints numerical P0-P4 counts, including zero-count tiers,
+their prioritized total, and separate untriaged and unresolved counts. The
+summary and JSON findings use the same finalized report population. Full
+per-finding evidence, explanations, and remediation remain in JSON and SARIF.
 
 Triage runs automatically after review. A confirmed finding is retained for
 remediation work, not automatically proof of exploitability. Save the complete worked queue
@@ -156,5 +171,6 @@ Run [green]trident help <topic>[/green] for details:
   [green]experts[/green]    council roles
   [green]tools[/green]      scanner adapters
 
-Exit codes: 0 clean, 1 findings at the gate, 2 scan error.
+Exit codes: 0 complete and below gate, 1 prioritized findings at the gate, 2 scan failure
+or incomplete review (untriaged/unresolved).
 """

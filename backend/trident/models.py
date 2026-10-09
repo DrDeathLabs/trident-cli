@@ -234,10 +234,10 @@ class FindingVerdict(Base):
 class LLMRequest(Base):
     """Durable audit record for one logical typed model decision.
 
-    The request payload is represented by hashes plus redacted messages; secrets
-    and authorization headers are never persisted.  Attempts contain the raw
-    model text and transport outcome so retries and unresolved decisions are
-    reproducible without treating an invalid response as a verdict.
+    The request payload is represented by hashes, not stored prompts. Secrets
+    and authorization headers are not persisted. Attempts retain raw model
+    response text and the accepted parsed decision; responses can quote source
+    context, so this table contains potentially sensitive scan data.
     """
     __tablename__ = "llm_requests"
 

@@ -57,6 +57,8 @@ trail. They also document where human review remains mandatory.
 - [Limitations](LIMITATIONS.md) - what Trident cannot establish on its own.
 - [Security policy](../SECURITY.md) - vulnerability reporting and sensitive data
   handling.
+- [Privacy and data handling](PRIVACY.md) - LLM processing, local storage,
+  retention, and operator responsibilities.
 - [Third-party notices](../THIRD-PARTY-NOTICES.md) - scanner licensing.
 
 ## Capability status

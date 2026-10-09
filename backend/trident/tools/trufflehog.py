@@ -61,15 +61,22 @@ class TruffleHogTool(ToolBase):
                 severity=Severity.critical.value if verified else Severity.high.value,
                 confidence=0.95 if verified else 0.7,
                 title=f"{'Verified' if verified else 'Potential'} secret: {detector}",
-                description=(f"TruffleHog detected a {detector} secret"
-                            + (" and VERIFIED it is live." if verified
-                               else " (unverified).")),
+                description=(f"TruffleHog detected a {detector} credential"
+                             + (" and verified it is live." if verified
+                                else "; verification is unavailable."))
+                + " Credential material is omitted from Trident output.",
                 file=self._rel(fs.get("file", "")),
                 line_start=int(fs.get("line", 0) or 0),
                 line_end=int(fs.get("line", 0) or 0),
-                snippet=(r.get("Redacted") or "")[:60],
+                snippet="[REDACTED]",
                 cwe="CWE-798",
                 recommendation="Rotate the credential immediately and move it to a secrets manager.",
-                raw=r,
+                raw={
+                    "DetectorName": detector,
+                    "Verified": verified,
+                    "SourceType": r.get("SourceType"),
+                    "file": self._rel(fs.get("file", "")),
+                    "line": int(fs.get("line", 0) or 0),
+                },
             ))
         return findings

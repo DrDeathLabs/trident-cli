@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from urllib.parse import urlsplit
 import random
 import threading
 import time
@@ -91,16 +92,34 @@ class OllamaBackend(LLMBackend):
             settings.llm.ollama_cloud_host
             if self.mode == "direct_cloud" else settings.llm.ollama_host
         )
-        self.host = configured_host.rstrip("/")
+        self.host = self._validate_host(configured_host, self.mode)
         self.timeout = float(timeout or settings.llm.response_timeout)
         self.connect_timeout = settings.llm.connect_timeout
         self.deadline = settings.llm.request_deadline
         self.max_retries = max(0, settings.llm.max_retries)
         self.client = httpx.Client(
             timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
+            follow_redirects=False,
         )
         self._ready = False
         self._ready_lock = threading.Lock()
+
+    @staticmethod
+    def _validate_host(host: str, mode: str) -> str:
+        normalized = host.rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise LLMError("Ollama host must be an HTTP(S) URL without embedded credentials or query")
+        if mode == "direct_cloud" and parsed.scheme != "https":
+            raise LLMError("Ollama direct_cloud host must use HTTPS")
+        return normalized
 
     def _url(self, path: str) -> str:
         return f"{self.host}{path}"
@@ -160,7 +179,7 @@ class OllamaBackend(LLMBackend):
                             f"Ollama authentication failed ({response.status_code}); "
                             "check Ollama sign-in or OLLAMA_API_KEY"
                         )
-                    raise LLMError(f"Ollama HTTP {response.status_code}: {response.text[:500]}")
+                    raise LLMError(f"Ollama HTTP {response.status_code}")
                 data = response.json()
                 return data, {
                     "attempts": attempts, "status_code": response.status_code,
@@ -333,7 +352,10 @@ class OllamaBackend(LLMBackend):
                 "auth": "api_key" if self.mode == "direct_cloud" else "local_ollama_session",
             }
         except Exception as e:
-            return {"status": "down", "host": self.host, "mode": self.mode, "error": str(e)}
+            return {
+                "status": "down", "host": self.host, "mode": self.mode,
+                "error": f"{type(e).__name__}: Ollama health check failed",
+            }
 
 
 # A JSON superset covering every council schema's fields. Because all schemas
@@ -402,7 +424,7 @@ class MockLLMBackend(LLMBackend):
         for t in texts:
             vec = [0.0] * dim
             for tok in (t or "").lower().split():
-                h = int(hashlib.md5(tok.encode()).hexdigest(), 16)
+                h = int(hashlib.md5(tok.encode(), usedforsecurity=False).hexdigest(), 16)
                 vec[h % dim] += 1.0
             out.append(vec)
         return out
@@ -426,7 +448,13 @@ def get_llm_backend(backend_override: str | None = None) -> LLMBackend:
 
     if backend == "openai":
         from trident.llm.openai_backend import OpenAIBackend
-        return OpenAIBackend(timeout=settings.llm.request_timeout, max_retries=settings.llm.max_retries)
+        return OpenAIBackend(
+            api_key=settings.llm.openai_api_key,
+            base_url=settings.llm.openai_base_url,
+            model=settings.llm.default_model,
+            timeout=settings.llm.request_timeout,
+            max_retries=settings.llm.max_retries,
+        )
 
     if backend == "anthropic":
         from trident.llm.anthropic_backend import AnthropicBackend

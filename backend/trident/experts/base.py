@@ -8,7 +8,6 @@ persistence happens on the orchestrating thread afterwards.
 from __future__ import annotations
 
 import os
-import re
 from abc import ABC
 
 from loguru import logger
@@ -64,19 +63,14 @@ class ExpertBase(ABC):
         return settings.llm.model_for("expert")
 
     # ---- relevance --------------------------------------------------------
+    def routing_decision(self, finding: Finding):
+        """Inspectable deterministic decision explaining whether this expert reviews."""
+        from trident.experts.routing import route_expert
+
+        return route_expert(finding, self)
+
     def is_relevant(self, finding: Finding) -> bool:
-        if self.source_tools and str(finding.tool) in self.source_tools:
-            return True
-        cwe = (finding.cwe or "").strip()
-        if cwe and self.domains:
-            m = re.search(r"\d+", cwe)
-            norm = f"CWE-{m.group(0)}" if m else cwe
-            if norm in self.domains:
-                return True
-        if not self.keywords:
-            return False
-        text = f"{finding.title} {finding.description} {finding.rule_id}".lower()
-        return any(re.search(rf"\b{re.escape(k)}\b", text) for k in self.keywords)
+        return self.routing_decision(finding).relevant
 
     # ---- DB-free LLM call (safe to run in a thread pool) -----------------
     def _ext_for(self, path: str) -> str:

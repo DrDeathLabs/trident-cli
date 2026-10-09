@@ -152,8 +152,8 @@ class NVDFetcher(BaseFetcher):
         try:
             if force:
                 # Wipe checkpoint so we start clean
-                conn.execute(f"DELETE FROM corpus_meta WHERE key='{_CHECKPOINT_KEY}'")
-                conn.execute(f"DELETE FROM corpus_meta WHERE key='{_PROGRESS_KEY}'")
+                conn.execute("DELETE FROM corpus_meta WHERE key=?", (_CHECKPOINT_KEY,))
+                conn.execute("DELETE FROM corpus_meta WHERE key=?", (_PROGRESS_KEY,))
                 conn.commit()
                 last_modified = None
             else:
@@ -170,8 +170,8 @@ class NVDFetcher(BaseFetcher):
             now = datetime.now(timezone.utc).isoformat()
             set_meta(conn, "nvd_last_modified", now)
             # Clean up working keys on success
-            conn.execute(f"DELETE FROM corpus_meta WHERE key='{_CHECKPOINT_KEY}'")
-            conn.execute(f"DELETE FROM corpus_meta WHERE key='{_PROGRESS_KEY}'")
+            conn.execute("DELETE FROM corpus_meta WHERE key=?", (_CHECKPOINT_KEY,))
+            conn.execute("DELETE FROM corpus_meta WHERE key=?", (_PROGRESS_KEY,))
             conn.commit()
             set_feed_status(conn, self.name, "done", record_count=total)
             logger.info(f"NVD fetch complete — {total:,} CVEs with CVSS scores")

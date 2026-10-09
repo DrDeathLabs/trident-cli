@@ -85,14 +85,17 @@ class TrivyTool(ToolBase):
                     rule_id=sec.get("RuleID", "trivy-secret"),
                     severity=sev,
                     confidence=0.8,
-                    title=f"Secret detected: {sec.get('Title', '')}",
-                    description=sec.get("Match", "")[:200],
+                    title="Potential credential exposed",
+                    description="A potential credential is present; its value is omitted from Trident output.",
                     file=target,
                     line_start=sec.get("StartLine", 0),
                     line_end=sec.get("EndLine", 0),
                     snippet="",
                     recommendation="Remove the secret and rotate it; use a secrets manager.",
-                    raw=sec,
+                    raw={key: sec[key] for key in (
+                        "Category", "Severity", "RuleID", "StartLine", "EndLine",
+                        "Fingerprint",
+                    ) if key in sec},
                 ))
         self.persist_findings(db, findings)
         self._emit_complete(db, len(findings), time.time() - t0)

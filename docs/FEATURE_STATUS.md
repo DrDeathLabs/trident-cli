@@ -23,11 +23,11 @@ This table describes the current standalone CLI capabilities.
 
 | Capability | Status | Notes |
 |-----------|--------|-------|
-| Five domain experts | Supported | Injection, auth, crypto, dependency, secrets/config |
+| Five domain experts | Supported | The original tool/CWE/keyword matcher is preserved as a compatibility floor; structured evidence may add experts, multi-domain review remains supported, and decisions expose scores/reasons |
 | Judge and cross-examination | Supported | Applied according to finding severity and disagreement |
 | Novel discovery | Supported | Iterative expert review |
 | Agentic exploration | Supported, optional | Off by default to limit token use and scan time. Enable with `scan.agentic` or `AGENTIC=true`. |
-| Attack-chain analysis | Supported | Chains confirmed findings |
+| Attack-chain analysis | Supported | Stable bounded finding selection; exact successful model-input duplicates reuse persisted chains; changed evidence invalidates old chains before budget checks and reports `unavailable_budget` when no call is available |
 | Class correction | Supported | Deterministic category-specific factor caps |
 | Corpus-profile adjustment | Supported | Requires downloaded CWE profiles from model refresh |
 | Reachability adjustment | Supported | Static analysis; caps confirmed unreachable paths and fails open when unknown |
@@ -60,7 +60,7 @@ This table describes the current standalone CLI capabilities.
 | Capability | Status | Notes |
 |-----------|--------|-------|
 | Ollama | Supported | Default backend; gateway may be local while the selected model may be cloud-tagged |
-| OpenAI | Supported | Requires OPENAI_API_KEY |
+| OpenAI-compatible gateway | Supported | Custom `/v1` base URL, bearer key, arbitrary model aliases, and models/chat-completions/embeddings endpoints; config commands mask credentials and accept hidden prompt/stdin input |
 | Anthropic | Supported | Requires ANTHROPIC_API_KEY |
 
 ## Scan inputs
@@ -69,13 +69,13 @@ This table describes the current standalone CLI capabilities.
 |-------|--------|-------|
 | Local directory or file | Supported | Default input form |
 | Git URL | Supported | HTTPS and SSH |
-| ZIP archive | Supported | Extracted to a temporary workspace |
+| ZIP archive | Supported | Safe extraction rejects traversal/links; bounded to 100,000 members and 4 GiB expanded size |
 | Container image | Unsupported | Provide source or configuration files instead |
 
 ## CI integration
 
 | Capability | Status | Notes |
 |-----------|--------|-------|
-| Exit codes 0, 1, and 2 | Supported | Clean, findings, scan error |
+| Exit codes 0, 1, and 2 | Supported | Complete below gate, prioritized finding at gate, scan failure or incomplete triage/review |
 | Severity gate | Supported | --severity-gate and --fail-on |
 | SARIF file generation | Supported | Upload with the host CI provider |
