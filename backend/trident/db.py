@@ -29,6 +29,16 @@ if settings.db.backend == "sqlite":
         cur.execute("PRAGMA busy_timeout=30000")
         cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
+        # SQLite creates the main DB and WAL/SHM sidecars during connection
+        # setup. Restrict all three immediately, including on Windows ACLs.
+        from trident.storage_security import secure_file
+
+        for path in (
+            settings.db.sqlite_path,
+            settings.db.sqlite_path.with_name(settings.db.sqlite_path.name + "-wal"),
+            settings.db.sqlite_path.with_name(settings.db.sqlite_path.name + "-shm"),
+        ):
+            secure_file(path)
 else:
     engine = create_engine(settings.db.url, pool_pre_ping=True, pool_recycle=1800)
 

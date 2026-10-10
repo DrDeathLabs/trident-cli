@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import json
+import io
+import stat
+import tarfile
+import zipfile
+from hashlib import sha256
 from types import SimpleNamespace
+
+import pytest
 
 import trident.tools.base as tool_base
 import trident.tools.installer as installer
@@ -36,6 +43,107 @@ def test_pip_tools_install_together_for_dependency_resolution(monkeypatch):
     assert len(calls) == 1
     assert calls[0][0:5] == [installer.sys.executable, "-m", "pip", "install", "--quiet"]
     assert calls[0][-4:] == installer._PIP_TOOLS
+
+
+def test_archive_extractors_reject_path_traversal_and_links(tmp_path, monkeypatch):
+    from trident import archive_safety
+    from trident.archive_safety import safe_extract_tar, safe_extract_zip
+
+    zip_data = io.BytesIO()
+    with zipfile.ZipFile(zip_data, "w") as archive:
+        archive.writestr("../outside.txt", "synthetic")
+    zip_data.seek(0)
+    zip_target = tmp_path / "zip-out"
+    with zipfile.ZipFile(zip_data) as archive:
+        with pytest.raises(RuntimeError, match="path traversal"):
+            safe_extract_zip(archive, zip_target)
+    assert not (tmp_path / "outside.txt").exists()
+
+    link_data = io.BytesIO()
+    with zipfile.ZipFile(link_data, "w") as archive:
+        info = zipfile.ZipInfo("link")
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        archive.writestr(info, "../../outside.txt")
+    link_data.seek(0)
+    with zipfile.ZipFile(link_data) as archive:
+        with pytest.raises(RuntimeError, match="symbolic links"):
+            safe_extract_zip(archive, tmp_path / "zip-links")
+
+    tar_data = io.BytesIO()
+    with tarfile.open(fileobj=tar_data, mode="w:gz") as archive:
+        info = tarfile.TarInfo("../outside-tar.txt")
+        payload = b"synthetic"
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+    tar_data.seek(0)
+    with tarfile.open(fileobj=tar_data, mode="r:gz") as archive:
+        with pytest.raises(RuntimeError, match="path traversal"):
+            safe_extract_tar(archive, tmp_path / "tar-out")
+    assert not (tmp_path / "outside-tar.txt").exists()
+
+    link_data = io.BytesIO()
+    with tarfile.open(fileobj=link_data, mode="w:gz") as archive:
+        info = tarfile.TarInfo("link")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "../../outside-tar.txt"
+        archive.addfile(info)
+    link_data.seek(0)
+    with tarfile.open(fileobj=link_data, mode="r:gz") as archive:
+        with pytest.raises(RuntimeError, match="links and special"):
+            safe_extract_tar(archive, tmp_path / "tar-links")
+
+    budget_data = io.BytesIO()
+    with zipfile.ZipFile(budget_data, "w") as archive:
+        archive.writestr("first.txt", "123")
+        archive.writestr("second.txt", "456")
+    budget_data.seek(0)
+    monkeypatch.setattr(archive_safety, "MAX_EXTRACTED_BYTES", 5)
+    with zipfile.ZipFile(budget_data) as archive:
+        with pytest.raises(RuntimeError, match="maximum supported extracted size"):
+            safe_extract_zip(archive, tmp_path / "zip-budget")
+    assert not (tmp_path / "zip-budget" / "first.txt").exists()
+
+    budget_data.seek(0)
+    monkeypatch.setattr(archive_safety, "MAX_EXTRACTED_BYTES", 100)
+    monkeypatch.setattr(archive_safety, "MAX_ARCHIVE_MEMBERS", 1)
+    with zipfile.ZipFile(budget_data) as archive:
+        with pytest.raises(RuntimeError, match="maximum supported member count"):
+            safe_extract_zip(archive, tmp_path / "zip-count")
+    assert not (tmp_path / "zip-count" / "first.txt").exists()
+
+
+def test_download_digest_check_detects_corruption():
+    payload = b"synthetic trusted release archive"
+    installer._verify_sha256(payload, sha256(payload).hexdigest(), "test archive")
+    with pytest.raises(RuntimeError, match="SHA-256 digest"):
+        installer._verify_sha256(payload, "0" * 64, "test archive")
+
+
+def test_cwe_parser_rejects_dtd_and_entity_declarations():
+    from defusedxml.common import EntitiesForbidden
+    from trident.calibration.feeds.cwe import _parse_cwe_xml
+
+    payload = b'<!DOCTYPE x [<!ENTITY expanded "synthetic">]><x>&expanded;</x>'
+    with pytest.raises(EntitiesForbidden):
+        _parse_cwe_xml(payload)
+
+
+def test_model_manager_table_counts_are_allowlisted():
+    from trident.model_manager import _count_table
+
+    class Connection:
+        def __init__(self):
+            self.executed = []
+
+        def execute(self, statement):
+            self.executed.append(statement)
+            return SimpleNamespace(fetchone=lambda: (7,))
+
+    conn = Connection()
+    assert _count_table(conn, "nvd") == 7
+    assert conn.executed == ["SELECT COUNT(*) FROM nvd_cve"]
+    assert _count_table(conn, "nvd_cve; DROP TABLE feed_status") == 0
+    assert len(conn.executed) == 1
 
 
 def test_osvscanner_parse():

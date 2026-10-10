@@ -130,8 +130,12 @@ class ToolBase(ABC):
     def _emit(self, db: Session, event_type: str, payload: dict | None = None):
         publish_event(db, self.job_id, event_type, payload or {})
 
-    def _emit_started(self, db: Session, command: str):
-        self._emit(db, EventType.TOOL_STARTED, {"tool": self.name, "command": command})
+    def _emit_started(self, db: Session, command: list[str]):
+        # Command arguments include local workspace paths and may contain
+        # sensitive filenames. Persist only the executable's basename.
+        self._emit(db, EventType.TOOL_STARTED, {
+            "tool": self.name, "command": Path(command[0]).name if command else self.name,
+        })
 
     def _emit_complete(self, db: Session, findings_count: int, duration_s: float):
         self._emit(
@@ -140,7 +144,9 @@ class ToolBase(ABC):
         )
 
     def _emit_stdout(self, db: Session, line: str):
-        self._emit(db, EventType.TOOL_STDOUT, {"tool": self.name, "line": line[:2000]})
+        # Raw scanner output can contain source lines and credentials. Findings
+        # are normalized separately; do not persist tool stdout/stderr events.
+        return None
 
     def _emit_finding(self, db: Session, rf: RawFinding):
         self._emit(db, EventType.TOOL_FINDING, {
@@ -160,22 +166,22 @@ class ToolBase(ABC):
         the output is incomplete.
         """
         cmd = [resolve_binary(cmd[0])] + list(cmd[1:])
-        self._emit_started(db, " ".join(cmd))
+        self._emit_started(db, cmd)
         try:
             proc = subprocess.Popen(
                 cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1, encoding="utf-8", errors="replace",
             )
-        except FileNotFoundError as e:
-            self._emit(db, EventType.TOOL_ERROR, {"tool": self.name, "error": f"binary not found: {e}"})
+        except FileNotFoundError:
+            self._emit(db, EventType.TOOL_ERROR, {
+                "tool": self.name, "error": "scanner executable could not be started",
+            })
             return 127, ""
-
-        err_lines: list[str] = []
 
         def _drain_err():
             try:
-                for line in proc.stderr:  # type: ignore[union-attr]
-                    err_lines.append(line.rstrip())
+                for _line in proc.stderr:  # type: ignore[union-attr]
+                    pass
             except Exception:
                 pass
 
@@ -206,8 +212,8 @@ class ToolBase(ABC):
             timed_out = True
             self._emit(db, EventType.TOOL_ERROR, {"tool": self.name, "error": f"timed out after {timeout}s"})
         err_thread.join(timeout=2)
-        if err_lines:
-            self._emit(db, EventType.TOOL_STDOUT, {"tool": self.name, "line": ("[stderr] " + err_lines[-1])[:2000]})
+        # Scanner stderr is intentionally held only in process memory because
+        # tools sometimes echo source context or credential-like values.
         rc = 124 if timed_out else proc.returncode
         return rc, "\n".join(lines)
 

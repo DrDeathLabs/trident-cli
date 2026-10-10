@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from trident.models import Severity
 from trident.tools.base import RawFinding, ToolBase, register_tool
+from trident.tools.redaction import is_credential_rule, redacted_credential_raw
 
 _SEV_MAP = {
     "CRITICAL": Severity.critical.value, "HIGH": Severity.high.value,
@@ -59,19 +60,37 @@ class CheckovTool(ToolBase):
             for c in failed:
                 rng = c.get("file_line_range") or [0, 0]
                 sev = _SEV_MAP.get(str(c.get("severity") or "").upper(), Severity.medium.value)
+                rule_id = c.get("check_id", "checkov")
+                file = self._rel(c.get("file_path", ""))
+                line_start = int(rng[0] or 0)
+                line_end = int(rng[-1] or 0)
+                credential = is_credential_rule(
+                    rule_id, c.get("check_name"), c.get("guideline"),
+                )
                 findings.append(RawFinding(
                     tool=self.name,
-                    rule_id=c.get("check_id", "checkov"),
+                    rule_id=rule_id,
                     severity=sev,
                     confidence=0.8,
-                    title=f"[{check_type}] {c.get('check_name', c.get('check_id', ''))}",
-                    description=c.get("check_name", ""),
-                    file=self._rel(c.get("file_path", "")),
-                    line_start=int(rng[0] or 0),
-                    line_end=int(rng[-1] or 0),
-                    snippet=c.get("resource", ""),
+                    title=("Potential credential exposed" if credential else
+                           f"[{check_type}] {c.get('check_name', c.get('check_id', ''))}"),
+                    description=(
+                        "A potential credential is present; its value is omitted from Trident output."
+                        if credential else c.get("check_name", "")
+                    ),
+                    file=file,
+                    line_start=line_start,
+                    line_end=line_end,
+                    snippet="[REDACTED]" if credential else c.get("resource", ""),
                     cwe=None,
-                    recommendation=c.get("guideline", "") or "",
-                    raw=c,
+                    recommendation=(
+                        "Remove the credential from source, rotate it, and use a secrets manager."
+                        if credential else c.get("guideline", "") or ""
+                    ),
+                    raw=(
+                        redacted_credential_raw(
+                            self.name, rule_id, file, line_start, line_end,
+                        ) if credential else c
+                    ),
                 ))
         return findings

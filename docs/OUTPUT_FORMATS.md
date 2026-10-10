@@ -22,10 +22,10 @@ trident scan --input-file sonar.json \
 All formats contain only **confirmed** findings in their actionable finding
 lists. In this context, `confirmed` means retained for remediation work after
 the review workflow. It does not mean that source-level exploitability has been
-proven, especially for report-only imports. Raw, disputed, refuted, duplicate,
-and error-state candidates are not actionable, but their dispositions, evidence,
-and counts remain available in the report's `dispositions` object and the full
-triage sidecar. This separation is central to Trident's output:
+proven, especially for report-only imports. Raw, refuted, duplicate, and
+error-state candidates are not actionable. Production convergence normalizes a
+remaining final dispute to unresolved; dispositions and evidence remain in the
+report and full triage sidecar. This separation is central to Trident's output:
 scanner candidates establish recall, while the worked queue shows what survived
 review and how urgently it should be addressed.
 
@@ -33,29 +33,34 @@ review and how urgently it should be addressed.
 
 ## Table (default)
 
-The table is the default output for interactive use. It shows finding counts
-per priority tier with a sample finding for each tier, followed by the triage
-playbook for every tier. Triage runs automatically after retained findings are
-produced.
+The table is the default output for interactive use. It prints a compact
+numerical summary derived from the finalized JSON report population. Every
+P0-P4 tier appears, including zero counts. `Total` is the sum of prioritized
+P0-P4 findings; confirmed findings without a valid priority appear in
+`Untriaged`. Findings in unresolved workflow states appear separately in
+`Unresolved`. In the production fail-closed convergence workflow, a final
+unresolved disagreement is normalized to the `unresolved` disposition; it is
+not emitted as a separate `disputed` count. Suppressed and false-positive
+findings are excluded from actionable counts. Their dispositions remain in
+the JSON report.
 
 ```
 Trident Scan - my-project
-──────────────────────────────────────────────────────────────
-  Tier │ Count │ Sample
-──────────────────────────────────────────────────────────────
-  P0   │     2 │ python.flask.security.insecure-deserialization  (app.py:36)
-  P1   │    18 │ yaml.github-actions.security.github-actions-...  (ci.yml:12)
-  P2   │    21 │ python.flask.security.audit.app-run-param-co...  (app.py:123)
-  P3   │    11 │ yaml.security.configuration.policy...  (manifests/app.yml:21)
-  P4   │    10 │ ...
-──────────────────────────────────────────────────────────────
-  Total confirmed: 62
+P0: 2
+P1: 18
+P2: 21
+P3: 11
+P4: 10
+Total: 62
+Untriaged: 0
+Unresolved: 0
 
-Triage plan:
-  P0: 2 | Critical | SLA: Immediate (out-of-band)
-       Immediate action required.
-  ...
 ```
+
+The CLI derives tier counts and severity-gate population from the same
+finalized JSON data. Full per-finding evidence and explanations remain in JSON
+and SARIF. A scan with confirmed findings left untriaged or unresolved exits 2
+as an incomplete review even when no priority reaches the severity gate.
 
 For the per-finding worked queue in terminal form, write a triage sidecar:
 
@@ -127,9 +132,11 @@ trident scan . --format json --output-file results.json \
 The sidecar has `report_type: "triage"`, the job metadata, import metadata,
 summary counts, non-empty P0-P4 tier arrays containing full finding records,
 and an `untriaged` array. The `dispositions` object lists rejected, duplicate,
-related, disputed, suppressed, out-of-scope, and other non-actionable records
-with their evidence. False positives and out-of-scope quality findings are not
-included in the retained finding queues.
+related, unresolved, suppressed, out-of-scope, and other non-actionable records
+with their evidence. The production convergence path normalizes remaining
+disputed findings to unresolved; an explicit `disputed` value can still appear
+in intermediate or imported audit records. False positives and out-of-scope
+quality findings are not included in retained finding queues.
 
 ### `job` object
 

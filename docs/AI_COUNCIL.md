@@ -18,7 +18,7 @@ deterministic code computes and explains the operational priority.
 
 ## Domain experts
 
-Five domain experts review findings in their area of specialization. Each expert sees only findings in its domain - an injection expert does not vote on crypto findings.
+Five domain experts review findings in their area of specialization. Deterministic routing sends findings to qualified domains, but the preserved legacy matcher may also retain broader matches for compatibility. Multi-domain evidence can select multiple experts; this routing does not prove full domain coverage.
 
 | Expert | Domain | Key CWEs |
 |--------|--------|----------|
@@ -27,6 +27,27 @@ Five domain experts review findings in their area of specialization. Each expert
 | **Crypto** | Weak ciphers (MD5, SHA1, DES), hardcoded keys, insufficient randomness, certificate validation, TLS misconfigurations, padding oracle | 327, 321, 330, 295 |
 | **Dependency & SBOM** | Known CVEs in third-party packages, transitive dependency risks, outdated lockfile entries, across all SCA tool outputs | 1035 |
 | **Secrets & Config** | Hardcoded credentials, API keys, private keys, misconfigured cloud storage, exposed debug endpoints, insecure default configurations | 798, 540, 1188 |
+
+### Deterministic expert routing
+
+Routing is deterministic and does not make an LLM call. Final eligibility is
+the logical OR of the preserved legacy matcher and the structured evidence
+matcher. The legacy matcher retains its original tool, CWE, and whole-word
+keyword decisions as a compatibility floor; structured evidence can add
+reviewers, but cannot remove one selected by the legacy behavior. Structured
+signals include CWE and OWASP classifications, scanner and corroborating-tool
+identity, dependency metadata, file and path context, and bounded rule or
+finding semantics. Each decision records a score and reasons such as `CWE match`,
+`OWASP match`, `scanner match`, `corroborating-tool match`, `dependency evidence`,
+`semantic rule match`, and `legacy compatibility match`. Routing decisions are
+available in persisted `scan.experts.routing` events.
+
+A finding that spans domains can go to more than one expert. Structured
+classification and sparse scanner evidence can route additional appropriate
+reviewers. Because the legacy matcher remains authoritative for compatibility,
+a legacy keyword hit such as “token” may retain an expert assignment even when
+the surrounding evidence is benign. This correction prioritizes preserving
+required review coverage; it does not require a reduction in expert calls.
 
 ---
 
@@ -51,7 +72,21 @@ reachability or exploitability.
 
 ## Red team
 
-The red team is a single budgeted LLM call that runs once per iteration over all confirmed findings. It looks for combinations of vulnerabilities that each expert would rate individually lower but together form a critical attack path.
+The red team analyzes a deterministic, bounded set of confirmed findings. It
+looks for combinations of vulnerabilities that each expert would rate
+individually lower but together form a critical attack path. Finding selection
+is stable across database ordering.
+
+Trident fingerprints the exact model, system and user messages, including the
+selected finding IDs, visible severity/CWE/location/description, prompt evidence,
+and report-only or source-grounded state. After a valid analysis, an identical
+fingerprint reuses the persisted attack chains and per-finding paths without
+another model call or budget charge. Any changed model-visible evidence triggers
+a new analysis. A failed or unparseable response is never cached as success.
+When changed evidence invalidates a previous chain but the LLM-call budget is
+exhausted, Trident deletes stale chain results, records the input as
+`unavailable_budget`, and exposes that status in JSON/SARIF reports. The same
+input remains eligible for a later retry.
 
 For example: a path traversal (P3 alone) combined with a file read vulnerability and an exposed credential (each P2) might chain into unauthenticated RCE.
 
@@ -87,14 +122,15 @@ Findings where all experts agree (or abstain) skip Phase B entirely.
 |---------|---------|-------------------|
 | `confirmed` | Candidate evidence is retained for remediation review | Yes |
 | `refuted` | This candidate is a false positive | No final finding; retained as audit evidence |
-| `disputed` | Experts could not agree after all iterations | No final finding; retained as audit evidence |
+| `disputed` | Experts could not agree after all iterations | In the final production convergence workflow, normalized to `unresolved`; retained in dispositions and audit evidence |
 | `abstain` | Expert has no opinion on this finding | Does not count |
 | `parse_error` | LLM response could not be parsed | Treated as abstain |
 
 Only `confirmed` findings appear in the actionable finding list in table, JSON,
-and SARIF output. Refuted, disputed, duplicate, and parse-error candidates are
-not actionable findings, but their counts and triage evidence remain available
-through the scan metadata and full triage sidecar.
+and SARIF output. Refuted, duplicate, and parse-error candidates are not
+actionable findings. A final disputed decision is fail-closed as `unresolved`
+by production convergence, appears in the dispositions metadata, and makes the
+scan exit 2. SonarQube `CODE_SMELL` disputes are normalized to `out_of_scope`.
 
 ---
 
@@ -110,7 +146,8 @@ Novel findings proposed by experts enter the review pipeline in the next iterati
 
 The loop stops when any of these conditions is true:
 
-- No unresolved work remains (no raw or disputed findings awaiting review)
+- No raw or disputed findings remain after the final iteration; outstanding
+  decisions are normalized to unresolved and reported as incomplete review
 - `max_iterations` is reached (default: 3)
 - The LLM-call budget is exhausted (`scan.max_llm_calls`, default: unlimited)
 - New confirmed findings drop below `MIN_NEW_FINDINGS` (default: 2) while disputes are not decreasing

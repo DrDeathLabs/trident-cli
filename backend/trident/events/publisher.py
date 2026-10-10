@@ -129,8 +129,10 @@ class EventType:
     SCAN_IMPORT_COMPLETE = "scan.import.complete"
     SCAN_CORRELATE_START = "scan.correlate.start"
     SCAN_EXPERTS_START = "scan.experts.start"
+    EXPERT_ROUTING = "scan.experts.routing"
     SCAN_DEBATE_START = "scan.debate.start"
     SCAN_REDTEAM_START = "scan.redteam.start"
+    REDTEAM_REUSED = "redteam.analysis.reused"
 
     CORRELATE_COMPLETE = "correlate.complete"
 

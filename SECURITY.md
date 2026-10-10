@@ -24,14 +24,24 @@ backend whose privacy and retention terms are appropriate for the target.
 
 ## Local data and credentials
 
-The CLI has no multi-user access-control layer. Its local database, extracted
-workspaces, calibration data, caches, reports, and scanner configuration are
-not encrypted by Trident. Protect them with normal operating-system
-permissions and remove sensitive artifacts after testing.
+The CLI has no multi-user access-control layer. Trident restricts its default
+config/app-data directories and SQLite database/sidecars to the current user
+(and SYSTEM/local Administrators on Windows), and atomically writes TOML
+configuration. It does not encrypt local databases, workspaces, caches, or
+reports. API keys stored in TOML remain plaintext to the current user and
+administrator/root processes; prefer environment-injected secrets or a secret
+manager where available. Job records and the typed-decision ledger have no
+automatic retention policy; source workspaces are swept according to
+`WORKSPACE_RETENTION_DAYS` (14 days by default). Review [Privacy](docs/PRIVACY.md)
+for data-flow and retention details.
 
 Cloud LLM credentials are read from configuration or environment variables. Do
 not commit them, include them in scan targets, or paste them into public issues.
-Use redacted output from `trident config show` when diagnosing setup.
+`config get`, `config show`, and `config list` mask configured API keys, and
+secret positional arguments are rejected. Use redacted output when diagnosing
+setup. Scanner output can contain credential material, so Trident does not
+persist raw scanner stdout/stderr events and secret adapters redact matched
+values from findings and reports.
 
 ## Triage boundary
 

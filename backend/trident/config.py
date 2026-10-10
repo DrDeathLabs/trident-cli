@@ -4,20 +4,25 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import platformdirs
+from trident.storage_security import secure_directory
 
 
 def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+@lru_cache(maxsize=1)
 def _app_data_dir() -> Path:
     """Per-OS app-data directory for desktop mode (SQLite file, workspaces,
     downloaded scanner binaries) — resolves to the right place on
     macOS/Windows/Linux with no Docker/Tauri-side plumbing needed."""
-    return Path(platformdirs.user_data_dir("Trident"))
+    path = Path(platformdirs.user_data_dir("Trident"))
+    secure_directory(path)
+    return path
 
 
 @dataclass
@@ -26,6 +31,12 @@ class LLMConfig:
     ollama_mode: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_MODE", "local_gateway"))
     ollama_host: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_HOST", _env("OLLAMA_HOST", "http://127.0.0.1:11434")))
     ollama_cloud_host: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_CLOUD_HOST", "https://ollama.com"))
+    openai_base_url: str = field(default_factory=lambda: _env(
+        "OPENAI_BASE_URL", _env("TRIDENT_OPENAI_BASE_URL", "https://api.openai.com/v1")
+    ))
+    openai_api_key: str = field(default_factory=lambda: _env(
+        "OPENAI_API_KEY", _env("TRIDENT_OPENAI_API_KEY", "")
+    ))
     # One default model for every council role (experts, judge, red-team), with
     # optional per-role overrides and a per-job override via the scan profile.
     default_model: str = field(default_factory=lambda: _env("TRIDENT_OLLAMA_MODEL", _env("EXPERT_MODEL", "nemotron-3-super:cloud")))
@@ -57,6 +68,25 @@ class LLMConfig:
             return self.triage_model
         return self.default_model
 
+    def __post_init__(self) -> None:
+        """Apply persisted configuration below environment-provided defaults."""
+        from trident import config_manager
+
+        keys = {
+            "llm.backend": "backend",
+            "llm.base_url": "ollama_host",
+            "llm.openai_base_url": "openai_base_url",
+            "llm.openai_api_key": "openai_api_key",
+            "llm.expert_model": "default_model",
+            "llm.judge_model": "judge_model",
+            "llm.redteam_model": "redteam_model",
+            "llm.secondary_model": "secondary_model",
+        }
+        for key, attribute in keys.items():
+            value, source = config_manager.get(key)
+            if source in ("config", "env"):
+                setattr(self, attribute, value)
+
 
 @dataclass
 class LoopConfig:
@@ -85,7 +115,7 @@ class DBConfig:
     host: str = field(default_factory=lambda: _env("POSTGRES_HOST", "localhost"))
     port: int = int(_env("POSTGRES_PORT", "5432"))
     user: str = field(default_factory=lambda: _env("POSTGRES_USER", "trident"))
-    password: str = field(default_factory=lambda: _env("POSTGRES_PASSWORD", "trident_dev_pw"))
+    password: str = field(default_factory=lambda: _env("POSTGRES_PASSWORD", ""), repr=False)
     db: str = field(default_factory=lambda: _env("POSTGRES_DB", "trident"))
     sqlite_path: Path = field(
         # Path("") is truthy (any Path object is), so check the raw string
@@ -100,10 +130,22 @@ class DBConfig:
     @property
     def url(self) -> str:
         if self.backend == "sqlite":
-            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.sqlite_path.is_symlink():
+                raise ValueError("TRIDENT_SQLITE_PATH must not point to a symbolic link")
+            if _env("TRIDENT_SQLITE_PATH"):
+                self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                secure_directory(self.sqlite_path.parent)
             return f"sqlite:///{self.sqlite_path}"
-        return (
-            f"postgresql+psycopg2://{self.user}:{self.password}@{self.host}:{self.port}/{self.db}"
+        if not self.password:
+            raise ValueError(
+                "POSTGRES_PASSWORD is required when TRIDENT_DB_BACKEND=postgres"
+            )
+        from sqlalchemy.engine import URL
+
+        return URL.create(
+            "postgresql+psycopg2", username=self.user, password=self.password,
+            host=self.host, port=self.port, database=self.db,
         )
 
 
