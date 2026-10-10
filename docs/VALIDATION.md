@@ -42,10 +42,11 @@ reconciles each printed terminal count against the finalized JSON findings,
 checks JSON/SARIF population parity and severity-gate exit codes, and repeats
 the checks through a freshly installed wheel against the localhost gateway.
 
-Current hardening acceptance includes Windows file ACL checks, credential
-redaction in secret-scanner evidence, OpenAI-compatible endpoint URL/redirect
-tests, archive traversal and size-limit cases, safe Git URL handling, and
-installed-wheel scans through the localhost test gateway. It does not
+Current hardening acceptance includes Windows private-ACL checks, junction
+rejection, fail-closed permission-denied writes that preserve the prior config,
+credential redaction in secret-scanner evidence, OpenAI-compatible endpoint
+URL/redirect tests, archive traversal and size-limit cases, safe Git URL
+handling, and installed-wheel scans through the localhost test gateway. It does not
 constitute external-provider testing or broad real-world coverage. Local
 release-readiness evidence is generated outside the source package and is not
 published by these checks.

@@ -109,6 +109,42 @@ def test_atomic_private_write_failure_keeps_existing_file(tmp_path, monkeypatch)
     assert list(target.parent.glob(f".{target.name}.*.tmp")) == []
 
 
+def test_atomic_private_write_does_not_retry_permission_denied(tmp_path, monkeypatch):
+    target = tmp_path / "private-config" / "config.toml"
+    target.parent.mkdir()
+    target.write_bytes(b"previous")
+    calls = []
+
+    def deny_create(_path, _flags, _mode=0o777):
+        calls.append(True)
+        raise PermissionError("synthetic denied write")
+
+    monkeypatch.setattr("trident.storage_security.secure_directory", lambda *_a, **_kw: None)
+    monkeypatch.setattr("trident.storage_security.os.open", deny_create)
+
+    with pytest.raises(PermissionError, match="synthetic denied write"):
+        atomic_write_private(target, b"replacement")
+
+    assert calls == [True]
+    assert target.read_bytes() == b"previous"
+    assert list(target.parent.glob(f".{target.name}.*.tmp")) == []
+
+
+def test_atomic_private_write_replace_failure_keeps_existing_file(tmp_path, monkeypatch):
+    target = tmp_path / "private-config" / "config.toml"
+    atomic_write_private(target, b"previous")
+
+    def fail_replace(_source, _destination):
+        raise OSError("synthetic replace failure")
+
+    monkeypatch.setattr("trident.storage_security.os.replace", fail_replace)
+    with pytest.raises(OSError, match="synthetic replace failure"):
+        atomic_write_private(target, b"replacement")
+
+    assert target.read_bytes() == b"previous"
+    assert list(target.parent.glob(f".{target.name}.*.tmp")) == []
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX mode-bit assertions are platform-specific")
 def test_sensitive_path_permissions_are_revalidated_after_change(tmp_path):
     from trident.storage_security import secure_directory, secure_file
@@ -145,6 +181,42 @@ def test_secure_file_rechecks_path_type_after_prior_secure_call(tmp_path, monkey
 
     with pytest.raises(OSError, match="regular file"):
         secure_file(target)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows reparse-point handling is platform-specific")
+def test_secure_directory_rejects_windows_junction(tmp_path):
+    """A junction is not reported by Path.is_symlink() on supported Windows Python."""
+    import subprocess
+
+    from trident.storage_security import secure_directory
+
+    outside = tmp_path / "outside"
+    link = tmp_path / "config-link"
+    outside.mkdir()
+    target = str(outside).replace("'", "''")
+    junction = str(link).replace("'", "''")
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+            f"New-Item -ItemType Junction -Path '{junction}' -Target '{target}' | Out-Null",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0
+    assert link.is_dir()
+    assert not link.is_symlink()
+    assert getattr(link.lstat(), "st_file_attributes", 0) & 0x400
+
+    try:
+        with pytest.raises(OSError, match="reparse point"):
+            secure_directory(link)
+        assert list(outside.iterdir()) == []
+    finally:
+        os.rmdir(link)
 
 
 def test_detected_credential_material_is_redacted_from_database_reports(

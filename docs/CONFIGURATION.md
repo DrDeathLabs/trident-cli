@@ -34,8 +34,10 @@ values are entered with a hidden interactive prompt, or can be read from
 standard input with `--stdin`; do not put credentials in command-line arguments.
 Trident atomically writes this file and restricts the config directory and file
 to the current user (POSIX mode 0700/0600; Windows ACL grants the current user,
-SYSTEM, and local Administrators). This does not encrypt the secret: it remains
-plaintext to the current user and administrator/root processes. Prefer
+SYSTEM, and local Administrators). Windows junctions and other reparse-point
+redirections are rejected. A failed private write leaves the existing config
+file in place. This does not encrypt the secret: it remains plaintext to the
+current user and administrator/root processes. Prefer
 `OPENAI_API_KEY` or a secret manager when available. The file is plaintext TOML.
 
 ---
