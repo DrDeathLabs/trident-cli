@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing tag to publish, for example v0.3.3"
+        description: "Existing tag to publish, for example v0.3.4"
         required: true
         type: string
       source_sha:

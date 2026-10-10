@@ -5,6 +5,10 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [0.3.4] - 2026-10-09
+
 ### Added
 
 - Generic OpenAI-compatible `/v1` gateway support through persisted settings,
@@ -44,8 +48,8 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   raw remote output, and credential-bearing Git URL forms are rejected.
 - The GitHub Actions release build runs with read-only contents permissions;
   write permission is isolated to the release-publication job.
-- The development package version is `0.3.4.dev0`; the published v0.3.3
-  release remains the latest public artifact.
+- Package metadata is finalized at `0.3.4`, following the public v0.3.3
+  release.
 
 ### Security
 

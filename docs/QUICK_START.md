@@ -19,7 +19,7 @@ source .venv/bin/activate
 .\.venv\Scripts\Activate.ps1
 
 # Install the downloaded GitHub release wheel, or use the source checkout.
-python -m pip install path/to/trident-0.3.3-py3-none-any.whl
+python -m pip install path/to/trident-0.3.4-py3-none-any.whl
 trident --help
 ```
 

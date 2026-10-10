@@ -1,6 +1,6 @@
 # Trident CLI
 
-[![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1-blue.svg)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 Trident is a local AI-assisted vulnerability analysis and triage engine for the
@@ -179,8 +179,8 @@ source .venv/bin/activate
 # Windows PowerShell
 # .venv\Scripts\Activate.ps1
 
-# Install the v0.3.3 wheel downloaded from its GitHub release:
-python -m pip install path/to/trident-0.3.3-py3-none-any.whl
+# Install the v0.3.4 wheel downloaded from its GitHub release:
+python -m pip install path/to/trident-0.3.4-py3-none-any.whl
 trident --version
 trident install-tools --verify --warmup
 ```
@@ -260,7 +260,7 @@ not publish on ordinary pushes, pull requests, or tag creation.
 | New user | [Installation](docs/INSTALLATION.md) | [Quick start](docs/QUICK_START.md) |
 | Scan operator | [Scanning](docs/SCANNING.md) | [Tools](docs/TOOLS.md) |
 | Triage reviewer | [Triage](docs/TRIAGE.md) | [Output formats](docs/OUTPUT_FORMATS.md) |
-| CI maintainer | [CI and SARIF](docs/CI_CD.md) | [Open-source readiness](docs/OPEN_SOURCE_READINESS.md) |
+| CI maintainer | [CI and SARIF](docs/CI_CD.md) | [Public release readiness](docs/OPEN_SOURCE_READINESS.md) |
 | Developer | [Development](docs/DEVELOPMENT.md) | [Architecture](docs/ARCHITECTURE.md) |
 | Security reviewer | [Limitations](docs/LIMITATIONS.md) | [Security policy](SECURITY.md) |
 | Privacy reviewer | [Privacy and data handling](docs/PRIVACY.md) | [Security policy](SECURITY.md) |
