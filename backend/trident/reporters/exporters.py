@@ -602,6 +602,11 @@ def to_sarif(db: Session, job_id: str) -> dict:
             "remediation_actions": _remediation_actions(db, job_id, findings),
             "import": _import_metadata(job),
             "dispositions": _disposition_report(db, job_id, job),
+            "redteam_analysis": (
+                (job.profile or {}).get("_redteam_analysis", {})
+                if job and isinstance((job.profile or {}).get("_redteam_analysis", {}), dict)
+                else {"status": "not_run", "paths": 0}
+            ),
         }}],
     }
 
@@ -664,6 +669,7 @@ def to_json(db: Session, job_id: str) -> dict:
         .order_by(AttackChain.iteration.asc(), AttackChain.created_at.asc())
         .all()
     )
+    redteam_state = (job.profile or {}).get("_redteam_analysis", {}) if job else {}
     return {
         "job": {
             "id": job_id, "target": job.target_name, "status": job.status,
@@ -672,6 +678,11 @@ def to_json(db: Session, job_id: str) -> dict:
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         },
         "import": _import_metadata(job),
+        "redteam_analysis": {
+            "status": redteam_state.get("status", "not_run"),
+            "fingerprint": redteam_state.get("fingerprint"),
+            "paths": redteam_state.get("paths", 0),
+        } if isinstance(redteam_state, dict) else {"status": "not_run", "paths": 0},
         "findings": [_finding_dict(f, job) for f in findings],
         "remediation_actions": _remediation_actions(db, job_id, findings),
         "attack_chains": [
@@ -933,6 +944,11 @@ def to_triage_json(db: Session, job_id: str) -> dict:
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         },
         "import": _import_metadata(job),
+        "redteam_analysis": (
+            (job.profile or {}).get("_redteam_analysis", {})
+            if job and isinstance((job.profile or {}).get("_redteam_analysis", {}), dict)
+            else {"status": "not_run", "paths": 0}
+        ),
         "summary": overview["summary"],
         "remediation_actions": _remediation_actions(db, job_id, findings),
         "tiers": tiers_out,
@@ -1169,6 +1185,11 @@ def to_triage_sarif(db: Session, job_id: str) -> dict:
             "remediation_actions": _remediation_actions(db, job_id, findings),
             "import": _import_metadata(job),
             "dispositions": _disposition_report(db, job_id, job),
+            "redteam_analysis": (
+                (job.profile or {}).get("_redteam_analysis", {})
+                if job and isinstance((job.profile or {}).get("_redteam_analysis", {}), dict)
+                else {"status": "not_run", "paths": 0}
+            ),
         }}],
     }
 

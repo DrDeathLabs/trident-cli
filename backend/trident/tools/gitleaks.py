@@ -24,7 +24,7 @@ class GitleaksTool(ToolBase):
         # --no-git: the workspace is a plain file copy, not a git repo, so scan
         # files directly instead of walking (nonexistent) git history.
         cmd = ["gitleaks", "detect", "--source", self.workspace, "--no-git",
-               "--report-format", "json", "--report-path", report_path, "--no-banner", "--verbose"]
+               "--report-format", "json", "--report-path", report_path, "--no-banner"]
         self._run_cmd(db, cmd, timeout=600)
         findings: list[RawFinding] = []
         try:
@@ -45,14 +45,16 @@ class GitleaksTool(ToolBase):
                 severity=Severity.high.value,
                 confidence=0.85,
                 title=f"Hardcoded secret: {r.get('RuleID', '')}",
-                description=r.get("Description", "Potential secret leaked in source"),
+                description="Potential credential detected; its value is omitted from Trident output.",
                 file=r.get("File", ""),
                 line_start=loc,
                 line_end=loc,
-                snippet=r.get("Secret", "")[:60] + "..." if r.get("Secret") else "",
+                snippet="[REDACTED]",
                 cwe="CWE-798",
                 recommendation="Remove the secret from source, rotate it, and use a secrets manager.",
-                raw=r,
+                raw={key: r[key] for key in (
+                    "RuleID", "File", "StartLine", "EndLine", "Fingerprint",
+                ) if key in r},
             ))
         self.persist_findings(db, findings)
         self._emit_complete(db, len(findings), time.time() - t0)

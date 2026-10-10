@@ -95,14 +95,20 @@ def get_status() -> dict[str, Any]:
 
 
 def _count_table(conn, table: str) -> int:
-    _table_map = {
-        "nvd": "nvd_cve", "epss": "epss", "kev": "kev",
-        "exploitdb": "exploitdb", "cwe": "cwe_tree",
-        "vulnrichment": "vulnrichment", "osv": "osv_cve",
+    _queries = {
+        "nvd": "SELECT COUNT(*) FROM nvd_cve",
+        "epss": "SELECT COUNT(*) FROM epss",
+        "kev": "SELECT COUNT(*) FROM kev",
+        "exploitdb": "SELECT COUNT(*) FROM exploitdb",
+        "cwe": "SELECT COUNT(*) FROM cwe_tree",
+        "vulnrichment": "SELECT COUNT(*) FROM vulnrichment",
+        "osv": "SELECT COUNT(*) FROM osv_cve",
     }
-    real = _table_map.get(table, table)
+    query = _queries.get(table)
+    if query is None:
+        return 0
     try:
-        cur = conn.execute(f"SELECT COUNT(*) FROM {real}")
+        cur = conn.execute(query)
         return (cur.fetchone() or (0,))[0]
     except Exception:
         return 0

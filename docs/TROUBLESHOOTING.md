@@ -16,7 +16,7 @@ GitHub release, or install the source checkout:
 python -m venv .venv
 .venv\Scripts\activate      # Windows
 source .venv/bin/activate   # macOS/Linux
-python -m pip install path/to/trident-0.3.3-py3-none-any.whl
+python -m pip install path/to/trident-0.3.4-py3-none-any.whl
 ```
 
 From a source checkout:
@@ -95,9 +95,13 @@ trident scan . --max-iterations 1 --quiet
 ollama ps
 ```
 
-### `scan error` - exit code 2
+### `scan error` or incomplete review - exit code 2
 
-Exit code 2 means an unhandled exception during ingest or scan setup. Run with a single iteration and without `--quiet` to see the full traceback:
+Exit code 2 indicates a scan/setup/report failure or incomplete review. Confirmed
+findings may remain untriaged, or a model decision may remain unresolved. Check
+the terminal `Untriaged`/`Unresolved` counts and JSON/SARIF dispositions. Exit 2
+takes precedence over the severity gate. For a setup failure, run with a single
+iteration and without `--quiet` to see the diagnostic:
 
 ```bash
 trident scan . --max-iterations 1
@@ -194,7 +198,7 @@ trident config get llm.base_url
 3. If Ollama is on a different host:
 
 ```bash
-trident config set llm.base_url http://192.168.1.50:11434
+trident config set llm.base_url http://127.0.0.1:11434
 ```
 
 ### OpenAI / Anthropic - `Authentication error`
@@ -202,33 +206,41 @@ trident config set llm.base_url http://192.168.1.50:11434
 Your API key is missing or invalid.
 
 ```bash
-# Verify the key is set (shows last 4 chars only for safety)
-trident config show | grep api_key
+# Verify that the key is configured (all secret values are masked)
+trident config get llm.openai_api_key
 ```
 
 Set via environment variable (preferred in CI):
 
 ```bash
-export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
+read -rsp 'OpenAI API key: ' OPENAI_API_KEY; echo; export OPENAI_API_KEY
+read -rsp 'Anthropic API key: ' ANTHROPIC_API_KEY; echo; export ANTHROPIC_API_KEY
 ```
 
 Or via config (stored in your local config file):
 
 ```bash
-trident config set llm.openai_api_key sk-...
-trident config set llm.anthropic_api_key sk-ant-...
+trident config set llm.openai_api_key
+trident config set llm.anthropic_api_key
 ```
+
+These commands use hidden prompts. For automation, pipe a protected secret
+source into `trident config set KEY --stdin`; never pass the secret as a
+positional argument. Config-file values remain plaintext on disk, protected by
+local file permissions rather than encryption.
 
 ---
 
 ## Getting more diagnostic output
 
 ```bash
-TRIDENT_LOG_LEVEL=DEBUG trident scan . 2>debug.log
+trident scan . 2>diagnostics.txt
 ```
 
-The debug log includes tool subcommand output, LLM request/response summaries, guard decisions, and database queries.
+The CLI writes progress and error messages to stderr. Raw scanner stdout/stderr
+is not persisted as job events, but diagnostics and paths can still be
+sensitive; inspect them before sharing. Model prompts and source excerpts are
+not intentionally logged by the OpenAI-compatible backend.
 
 ---
 

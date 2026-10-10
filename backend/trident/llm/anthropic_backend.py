@@ -37,6 +37,7 @@ class AnthropicBackend(LLMBackend):
         self.max_retries = max_retries
         self.client = httpx.Client(
             timeout=timeout,
+            follow_redirects=False,
             headers={
                 "x-api-key": self.api_key,
                 "anthropic-version": _API_VERSION,
@@ -60,10 +61,9 @@ class AnthropicBackend(LLMBackend):
             raise LLMUnavailable(f"Anthropic timed out after {self.timeout}s: {e}") from e
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
-            body = e.response.text[:500]
             if status in (401, 403):
                 raise LLMError(f"Anthropic auth error {status}: check ANTHROPIC_API_KEY") from e
-            raise LLMError(f"Anthropic HTTP {status}: {body}") from e
+            raise LLMError(f"Anthropic HTTP {status}") from e
 
     def _convert_messages(self, messages: list[ChatMessage]) -> tuple[str | None, list[dict]]:
         """Split system message from the rest; return (system, messages)."""
@@ -142,4 +142,7 @@ class AnthropicBackend(LLMBackend):
                 "expert_model_available": self.default_model in models,
             }
         except Exception as e:
-            return {"status": "down", "host": _ANTHROPIC_BASE, "error": str(e)}
+            return {
+                "status": "down", "host": _ANTHROPIC_BASE,
+                "error": f"{type(e).__name__}: Anthropic health check failed",
+            }

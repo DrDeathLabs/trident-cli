@@ -14,6 +14,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
@@ -47,12 +48,9 @@ def _detect_languages(workspace: str) -> list[str]:
 
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: str) -> None:
     """Extract a zip, refusing entries that would escape `dest` (zip-slip)."""
-    dest_real = os.path.realpath(dest)
-    for member in zf.namelist():
-        target = os.path.realpath(os.path.join(dest, member))
-        if target != dest_real and not target.startswith(dest_real + os.sep):
-            raise RuntimeError(f"unsafe path in archive (zip-slip): {member}")
-    zf.extractall(dest)
+    from trident.archive_safety import safe_extract_zip
+
+    safe_extract_zip(zf, dest)
 
 
 # Schemes we'll actually hand to `git clone`, plus the scp-like git@host:path
@@ -76,12 +74,18 @@ def _validate_git_source_ref(source_ref: str) -> None:
     """
     ref = (source_ref or "").strip()
     if not ref or ref.startswith("-"):
-        raise ValueError(f"refusing to clone: invalid or unsafe source_ref: {source_ref!r}")
+        raise ValueError("refusing to clone: invalid or unsafe source reference")
     if not _GIT_URL_RE.match(ref):
         raise ValueError(
-            "refusing to clone: source_ref must be an http(s)/git/ssh URL or an "
-            f"scp-like git@host:path — got: {source_ref!r}"
+            "refusing to clone: source reference must be an http(s)/git/ssh URL "
+            "or an scp-like git@host:path"
         )
+    if "?" in ref or "#" in ref:
+        raise ValueError("refusing to clone: query strings and fragments are not supported")
+    if "://" in ref:
+        parsed = urlsplit(ref)
+        if parsed.password is not None or (parsed.username and parsed.scheme != "ssh"):
+            raise ValueError("refusing to clone: credentials must not be embedded in the source URL")
 
 
 def _make_workspace(job_id: str) -> str:
@@ -138,18 +142,21 @@ def ingest(db: Session, job_id: str, source_type: str, source_ref: str) -> tuple
     elif source_type == "git":
         _validate_git_source_ref(source_ref)
         publish_event(db, job_id, EventType.JOB_INGEST_PROGRESS, {"stage": "cloning git repo"})
-        rc = subprocess.run(
-            # -c protocol.{ext,file}.allow=never: even if a future change ever
-            # loosens the scheme allowlist above, git itself still refuses the
-            # ext:: (arbitrary command) and file:: (local read) transports.
-            # `--` separates the URL from options so a validated-but-adjacent
-            # edge case can't be reinterpreted as a flag.
-            ["git", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never",
-             "clone", "--depth", "1", "--", source_ref, ws],
-            capture_output=True, text=True, timeout=300,
-        )
+        try:
+            rc = subprocess.run(
+                # -c protocol.{ext,file}.allow=never: even if a future change ever
+                # loosens the scheme allowlist above, git itself still refuses the
+                # ext:: (arbitrary command) and file:: (local read) transports.
+                # `--` separates the URL from options so a validated-but-adjacent
+                # edge case can't be reinterpreted as a flag.
+                ["git", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never",
+                 "clone", "--depth", "1", "--", source_ref, ws],
+                capture_output=True, text=True, timeout=300,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise RuntimeError("git clone could not be completed") from None
         if rc.returncode != 0:
-            raise RuntimeError(f"git clone failed: {rc.stderr[:500]}")
+            raise RuntimeError(f"git clone failed (exit code {rc.returncode})")
         # Record commit hash
         try:
             ch = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ws, capture_output=True, text=True)

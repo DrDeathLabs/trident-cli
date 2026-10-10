@@ -13,9 +13,11 @@ Tools handled:
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import io
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -25,6 +27,15 @@ import zipfile
 from pathlib import Path
 
 import httpx
+from trident.archive_safety import safe_extract_tar, safe_extract_zip
+
+
+def _verify_sha256(data: bytes, expected: str, subject: str) -> None:
+    expected = expected.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise RuntimeError(f"{subject} release metadata is missing a valid SHA-256 digest")
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise RuntimeError(f"{subject} failed its published SHA-256 digest")
 
 # (repo, windows_pattern, linux_pattern, darwin_pattern, exe_in_archive_or_None)
 # Patterns use fnmatch wildcards against the release asset filename.
@@ -194,7 +205,10 @@ def _install_go_runtime(tools_dir: Path, client: httpx.Client, echo=print) -> Pa
         raise RuntimeError(f"No Go release archive found for {os_}/{arch}")
     filename = match["filename"]
     echo(f"  go runtime: downloading {filename} ({match['size'] // 1_048_576} MB) ...")
-    data = client.get(f"https://dl.google.com/go/{filename}", timeout=600).content
+    response = client.get(f"https://dl.google.com/go/{filename}", timeout=600)
+    response.raise_for_status()
+    data = response.content
+    _verify_sha256(data, str(match.get("sha256") or ""), "Go runtime archive")
     dest = tools_dir / "go_runtime"
     dest.mkdir(parents=True, exist_ok=True)
     suffix = ".exe" if sys.platform == "win32" else ""
@@ -202,10 +216,10 @@ def _install_go_runtime(tools_dir: Path, client: httpx.Client, echo=print) -> Pa
     # Extract the entire archive into dest; Go archives unpack as a "go/" subtree.
     if filename.endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            zf.extractall(dest)
+            safe_extract_zip(zf, dest)
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-            tf.extractall(dest)
+            safe_extract_tar(tf, dest)
     if not go_bin.exists():
         raise RuntimeError(f"Go binary not found at expected path {go_bin} after extraction")
     if sys.platform != "win32":
@@ -322,6 +336,14 @@ def install_tool(name: str, tools_dir: Path, client: httpx.Client,
         echo(f"  {name}: downloading {asset['name']} ({asset['size'] // 1024} KB) ...")
         r = client.get(asset["browser_download_url"], timeout=120, follow_redirects=True)
         r.raise_for_status()
+        digest = str(asset.get("digest") or "")
+        if digest:
+            algorithm, separator, expected = digest.partition(":")
+            if not separator or algorithm.lower() != "sha256":
+                raise RuntimeError("scanner release asset digest uses an unsupported algorithm")
+            _verify_sha256(r.content, expected, "scanner release asset")
+        else:
+            echo(f"  {name}: release metadata has no asset digest; relying on HTTPS transport")
 
         tools_dir.mkdir(parents=True, exist_ok=True)
         suffix = ".exe" if sys.platform == "win32" else ""

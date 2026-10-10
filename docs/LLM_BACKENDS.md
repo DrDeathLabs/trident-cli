@@ -1,8 +1,8 @@
 # LLM Backends
 
-Trident uses an LLM for council review, judge review, red-team chaining,
+Trident uses an LLM for council review, judge review, Red-Team analysis,
 automatic triage, and novel discovery. You can use the Ollama backend through
-an Ollama gateway, OpenAI, or Anthropic.
+an Ollama gateway, an OpenAI-compatible `/v1` gateway, or Anthropic.
 
 ---
 
@@ -57,13 +57,13 @@ the simplest way to use an Ollama account with cloud-tagged models.
 If Ollama is running on a different host or port:
 
 ```bash
-trident config set llm.base_url http://192.168.1.50:11434
+trident config set llm.base_url http://127.0.0.1:11434
 ```
 
 Or with the environment variable:
 
 ```bash
-TRIDENT_OLLAMA_HOST=http://192.168.1.50:11434 trident scan .
+TRIDENT_OLLAMA_HOST=http://127.0.0.1:11434 trident scan .
 ```
 
 ### Cloud model identity
@@ -80,34 +80,61 @@ bounded JSON repair, semantic validation, and fail-closed unresolved handling.
 
 ---
 
-## OpenAI
+## OpenAI-compatible gateways
 
-### Setup
+The OpenAI backend accepts a generic OpenAI-compatible provider implementing
+these endpoints:
+
+```text
+GET  <base_url>/models
+POST <base_url>/chat/completions
+POST <base_url>/embeddings
+```
+
+The default `llm.openai_base_url` is `https://api.openai.com/v1`. A custom base
+URL should include `/v1`; Trident normalizes an optional trailing slash. Model
+names are aliases supplied by the gateway and are sent unchanged. Runtime
+settings resolve in this order: CLI options, environment variables, persisted
+configuration, then defaults. For the gateway, use `OPENAI_BASE_URL` and
+`OPENAI_API_KEY`; role aliases can use `EXPERT_MODEL`, `JUDGE_MODEL`, and
+`REDTEAM_MODEL` or their Trident-prefixed equivalents.
+
+Remote custom endpoints must use HTTPS. Trident permits unencrypted HTTP only
+for loopback addresses such as `127.0.0.1` or `localhost`, rejects credentials
+and query parameters embedded in the URL, and does not follow redirects. These
+checks prevent a bearer key from being sent over cleartext transport or to a
+redirect destination. The supported endpoints were validated with a real
+localhost HTTP test gateway; no external provider was tested in this acceptance.
+
+### Setup with a custom endpoint
 
 ```bash
 trident config set llm.backend openai
-trident config set llm.openai_api_key sk-...
-trident config set llm.expert_model gpt-4o
+trident config set llm.openai_base_url http://127.0.0.1:8000/v1
+trident config set llm.expert_model security-expert
+trident config set llm.openai_api_key
 ```
+
+The API-key command prompts with input hidden. To load credentials from a
+protected source without putting them in a command argument, pipe them to
+`trident config set llm.openai_api_key --stdin`. `config get` and `config show`
+mask configured secrets; positional secret values are rejected. You can instead
+provide `OPENAI_API_KEY` through your environment or a secret manager.
 
 Or using environment variables:
 
 ```bash
 export LLM_BACKEND=openai
-export OPENAI_API_KEY=sk-...
-export EXPERT_MODEL=gpt-4o
+export OPENAI_BASE_URL=http://127.0.0.1:8000/v1
+export OPENAI_API_KEY
+export EXPERT_MODEL=security-expert
 trident scan .
 ```
 
-The API key is treated as a secret and is never printed by `trident config show`.
-
-### Model recommendations
-
-| Use case | Recommended model |
-|----------|------------------|
-| Default scans | `gpt-4o` |
-| Cost-sensitive | `gpt-4o-mini` |
-| Maximum reasoning | `o3` |
+`OPENAI_BASE_URL` and `OPENAI_API_KEY` override persisted config. The key is
+sent as a bearer token and is masked by `trident config get/show`. Any
+gateway-specific alias, such as `enterprise-sec-model` or
+`routed-security-model`, can be configured as the model name.
 
 ---
 
@@ -117,7 +144,7 @@ The API key is treated as a secret and is never printed by `trident config show`
 
 ```bash
 trident config set llm.backend anthropic
-trident config set llm.anthropic_api_key sk-ant-...
+trident config set llm.anthropic_api_key
 trident config set llm.expert_model claude-sonnet-5
 ```
 
@@ -125,8 +152,8 @@ Or using environment variables:
 
 ```bash
 export LLM_BACKEND=anthropic
-export ANTHROPIC_API_KEY=sk-ant-...
-export EXPERT_MODEL=claude-sonnet-5
+read -rsp 'Anthropic API key: ' ANTHROPIC_API_KEY; echo; export ANTHROPIC_API_KEY
+export EXPERT_MODEL=provider-supported-model-id
 trident scan .
 ```
 
@@ -138,18 +165,19 @@ Each council role can use a different model. This is useful when you want to use
 
 | Role | Environment variable | Default |
 |------|---------------------|---------|
-| All experts | `EXPERT_MODEL` | backend default |
-| Judge only | `JUDGE_MODEL` | same as `EXPERT_MODEL` |
-| Red team only | `REDTEAM_MODEL` | same as `EXPERT_MODEL` |
+| All experts | `TRIDENT_OLLAMA_MODEL` or `EXPERT_MODEL` | backend default |
+| Judge only | `TRIDENT_JUDGE_MODEL` or `JUDGE_MODEL` | same as `EXPERT_MODEL` |
+| Red-Team only | `TRIDENT_REDTEAM_MODEL` or `REDTEAM_MODEL` | same as `EXPERT_MODEL` |
 | Triage pass | `TRIAGE_MODEL` | same as `EXPERT_MODEL` |
 
-Example: use GPT-4o for most roles, `o3` for the judge:
+Example: use one gateway model alias for experts and a different judge alias:
 
 ```bash
 export LLM_BACKEND=openai
-export OPENAI_API_KEY=sk-...
-export EXPERT_MODEL=gpt-4o
-export JUDGE_MODEL=o3
+export OPENAI_BASE_URL=http://127.0.0.1:8000/v1
+export OPENAI_API_KEY="$OPENAI_API_KEY"
+export EXPERT_MODEL=security-expert
+export JUDGE_MODEL=security-judge
 trident scan .
 ```
 
@@ -157,14 +185,16 @@ trident scan .
 
 ## Per-scan model override
 
-Override the model for a single scan without changing configuration:
+Override the backend or model for one scan:
 
 ```bash
-trident scan . --model gpt-4o-mini
-trident scan . --backend anthropic --model claude-haiku-4-5
+trident scan . --backend openai --model routed-security-model
+trident scan . --backend anthropic --model provider-model-alias
 ```
 
-CLI flags take precedence over config and environment variables.
+The resolution order is CLI flags, environment, persisted config, then defaults.
+`--model` applies to expert review, judge, Red-Team, and triage calls for the
+scan.
 
 ---
 

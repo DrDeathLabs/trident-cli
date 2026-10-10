@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from trident.models import Severity
 from trident.tools.base import RawFinding, ToolBase, register_tool
+from trident.tools.redaction import is_credential_rule, redacted_credential_raw
 
 SEV_MAP = {"ERROR": Severity.high.value, "WARNING": Severity.medium.value, "INFO": Severity.low.value}
 
@@ -52,10 +53,40 @@ class SemgrepTool(ToolBase):
             snippet = r.get("extra", {}).get("lines", "")
             metadata = r.get("extra", {}).get("metadata", {})
             cwe = None
-            for c in metadata.get("cwe", []):
+            cwes = metadata.get("cwe", [])
+            if isinstance(cwes, str):
+                cwes = [cwes]
+            for c in cwes:
                 if isinstance(c, str):
                     cwe = c.split(":")[0].replace("CWE-", "CWE-")
                     break
+            tags = metadata.get("tags") or []
+            if isinstance(tags, str):
+                tags = [tags]
+            credential = is_credential_rule(
+                check_id, metadata.get("message"), metadata.get("category"),
+                *tags, cwe=cwe,
+            )
+            if credential:
+                findings.append(RawFinding(
+                    tool=self.name,
+                    rule_id=check_id,
+                    severity=sev,
+                    confidence=0.8,
+                    title="Potential credential exposed",
+                    description="A potential credential is present; its value is omitted from Trident output.",
+                    file=path,
+                    line_start=start.get("line", 0),
+                    line_end=end.get("line", start.get("line", 0)),
+                    snippet="[REDACTED]",
+                    cwe=cwe,
+                    recommendation="Remove the credential from source, rotate it, and use a secrets manager.",
+                    raw=redacted_credential_raw(
+                        self.name, check_id, path, start.get("line", 0),
+                        end.get("line", start.get("line", 0)), cwe=cwe,
+                    ),
+                ))
+                continue
             findings.append(RawFinding(
                 tool=self.name,
                 rule_id=check_id,

@@ -13,6 +13,7 @@ import os
 import time
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from loguru import logger
@@ -71,6 +72,15 @@ def _ledger_session_factory():
                 cur.execute("PRAGMA journal_mode=WAL")
                 cur.execute("PRAGMA busy_timeout=30000")
                 cur.close()
+                from trident.storage_security import secure_file
+
+                ledger = Path(ledger_path)
+                for path in (
+                    ledger,
+                    ledger.with_name(ledger.name + "-wal"),
+                    ledger.with_name(ledger.name + "-shm"),
+                ):
+                    secure_file(path)
             Base.metadata.create_all(ledger_engine)
             _ledger_factory = sessionmaker(bind=ledger_engine, autoflush=False, expire_on_commit=False)
         else:

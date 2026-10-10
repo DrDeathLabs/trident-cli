@@ -14,7 +14,6 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -23,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 
 from trident.cli import _detect_source, _render_table, cli
 from trident import __version__
-from trident.models import Base, Finding
+from trident.models import Base, Finding, Job
 
 
 @pytest.fixture
@@ -37,13 +36,6 @@ def tmpdir_path():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_ns(**kw) -> SimpleNamespace:
-    """Minimal Finding-like object for _render_table unit tests."""
-    defaults = dict(priority="P2", title="SQL Injection", file="app/db.py", line_start=10)
-    defaults.update(kw)
-    return SimpleNamespace(**defaults)
-
 
 def _mem_engine():
     eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -81,10 +73,83 @@ def _seed_finding(Session, job_id: str, priority: str = "P1", status: str = "con
         s.close()
 
 
+def _seed_reporting_rows(Session, job_id: str, rows: list[dict]) -> None:
+    """Seed a fixed report population for summary/export reconciliation tests."""
+    s = Session()
+    try:
+        for index, row in enumerate(rows):
+            values = {
+                "id": f"{job_id[:22]}-{index:02d}",
+                "job_id": job_id,
+                "hash": f"{job_id[:12]}-{index:02d}",
+                "tool": "synthetic-scanner",
+                "rule_id": f"synthetic.rule.{index}",
+                "severity": "high",
+                "confidence": 0.9,
+                "title": row.get("title", f"Synthetic finding {index}"),
+                "description": "Synthetic regression evidence.",
+                "file": f"src/finding_{index}.py",
+                "line_start": index + 1,
+                "line_end": index + 1,
+                "cwe": "CWE-89",
+                "status": row.get("status", "confirmed"),
+                "priority": row.get("priority"),
+                "triage": {"rationale": "Synthetic regression assessment."},
+            }
+            s.add(Finding(**values))
+        s.commit()
+    finally:
+        s.close()
+
+
+def _reporting_stub(Session, rows: list[dict], *, unresolved_job: bool = False):
+    async def _stub(job_id, *_args, **_kwargs):
+        _seed_reporting_rows(Session, job_id, rows)
+        if unresolved_job:
+            from trident.models import Job
+            s = Session()
+            try:
+                job = s.get(Job, job_id)
+                job.status = "completed_with_unresolved"
+                s.commit()
+            finally:
+                s.close()
+        return True
+    return _stub
+
+
+def _parse_count_line(output: str, label: str) -> int:
+    import re
+
+    match = re.search(rf"(?m)^{re.escape(label)}:\s+(\d+)\s*$", output)
+    assert match, f"missing numerical {label} count in output:\n{output}"
+    return int(match.group(1))
+
+
 def test_version_option_uses_package_version():
     result = CliRunner().invoke(cli, ["--version"])
     assert result.exit_code == 0
     assert __version__ in result.output
+
+
+def test_scan_help_describes_numeric_summary():
+    result = CliRunner().invoke(cli, ["scan", "--help"])
+    assert result.exit_code == 0
+    assert "P0-P4 counts" in result.output
+
+
+def test_scan_rejects_embedded_git_credentials_before_persisting_or_echoing_them(mem_db):
+    secret = "synthetic-git-secret"
+    result = CliRunner().invoke(
+        cli, ["scan", f"https://user:{secret}@example.invalid/repo.git", "--quiet"],
+    )
+    assert result.exit_code == 2
+    assert secret not in result.output
+    session = mem_db()
+    try:
+        assert session.query(Job).count() == 0
+    finally:
+        session.close()
 
 
 @pytest.fixture
@@ -149,44 +214,213 @@ def test_detect_source_local_dir(tmpdir_path):
 # Unit: _render_table
 # ---------------------------------------------------------------------------
 
-def test_render_table_counts_each_tier():
-    findings = [
-        _make_ns(priority="P0", title="RCE"),
-        _make_ns(priority="P1", title="SQLi"),
-        _make_ns(priority="P1", title="SSRF"),
-        _make_ns(priority="P3", title="Info leak"),
+def test_render_table_is_a_compact_numeric_summary():
+    report = {
+        "triage": {
+            "summary": {"by_tier": {"P0": 1, "P1": 2, "P2": 0, "P3": 1, "P4": 0}},
+            "untriaged": 1,
+        },
+        "dispositions": {"counts": {"unresolved_model_error": 2}},
+    }
+    table = _render_table(report, "myapp")
+    assert table.splitlines() == [
+        "Trident Scan - myapp", "P0: 1", "P1: 2", "P2: 0", "P3: 1", "P4: 0",
+        "Total: 4", "Untriaged: 1", "Unresolved: 2",
     ]
-    table = _render_table(findings, "myapp")
-    assert "P0" in table
-    assert "P1" in table
-    assert "P2" in table  # row present even with count 0
-    assert "P3" in table
+    assert "Sample" not in table
+    assert "Triage plan" not in table
 
 
-def test_render_table_shows_sample_title():
-    findings = [_make_ns(priority="P1", title="Command injection", file="run.py", line_start=7)]
-    table = _render_table(findings, "svc")
-    assert "Command injection" in table
-    assert "run.py" in table
+def test_render_table_empty_findings_shows_every_zero():
+    report = {"triage": {"summary": {"by_tier": {}}, "untriaged": 0}, "dispositions": {}}
+    table = _render_table(report, "empty-app")
+    assert table.splitlines() == [
+        "Trident Scan - empty-app", "P0: 0", "P1: 0", "P2: 0", "P3: 0", "P4: 0",
+        "Total: 0", "Untriaged: 0", "Unresolved: 0",
+    ]
 
 
-def test_render_table_empty_findings():
-    table = _render_table([], "empty-app")
-    assert "Total confirmed: 0" in table
-    assert "Triage plan:" in table
+def test_terminal_summary_reconciles_final_report_population(
+    tmpdir_path, mem_db, monkeypatch,
+):
+    """Keep terminal counts aligned with the final report and status buckets."""
+    rows = [
+        {"priority": "P0", "title": "Critical item"},
+        {"priority": "P1", "title": "High item one"},
+        {"priority": "P1", "title": "High item two"},
+        {"priority": "P2", "title": "Medium item"},
+        {"priority": "P3", "title": "Low item"},
+        {"priority": "P4", "title": "Informational item"},
+        {"priority": None, "title": "Confirmed but untriaged"},
+        {"priority": "P0", "status": "disputed", "title": "Disputed item"},
+        {"priority": "P1", "status": "suppressed", "title": "Suppressed item"},
+        {"priority": "P2", "status": "false_positive", "title": "False positive item"},
+        {"priority": None, "status": "unresolved", "title": "Unresolved item"},
+        {"priority": None, "status": "unresolved_model_error", "title": "Model-error item"},
+        {"priority": None, "status": "unreviewed", "title": "Unreviewed item"},
+    ]
+
+    monkeypatch.setattr(
+        "trident.cli._run_scan",
+        _reporting_stub(mem_db, rows, unresolved_job=True),
+    )
+    table = CliRunner().invoke(cli, ["scan", tmpdir_path, "--quiet"])
+    # The pipeline reports unresolved decisions as an integrity exit 2, while
+    # still emitting the completed report for operator inspection.
+    assert table.exit_code == 2, table.output
+
+    # Reconcile every terminal count with the final report categories. The
+    # pre-fix preview and ambiguous aggregate are captured in acceptance evidence.
+    assert _parse_count_line(table.output, "P0") == 1
+    assert _parse_count_line(table.output, "P1") == 2
+    assert _parse_count_line(table.output, "P2") == 1
+    assert _parse_count_line(table.output, "P3") == 1
+    assert _parse_count_line(table.output, "P4") == 1
+    assert _parse_count_line(table.output, "Total") == 6
+    assert _parse_count_line(table.output, "Untriaged") == 1
+    assert _parse_count_line(table.output, "Unresolved") == 3
+
+    monkeypatch.setattr(
+        "trident.cli._run_scan",
+        _reporting_stub(mem_db, rows, unresolved_job=True),
+    )
+    machine = CliRunner().invoke(cli, ["scan", tmpdir_path, "--format", "json", "--quiet"])
+    assert machine.exit_code == 2, machine.output
+    report = json.loads(machine.output)
+    assert [finding["title"] for finding in report["findings"]] == [
+        "Critical item", "High item one", "High item two", "Medium item",
+        "Low item", "Informational item", "Confirmed but untriaged",
+    ]
+    assert len({finding["id"] for finding in report["findings"]}) == 7
+    assert report["triage"]["summary"]["by_tier"] == {
+        "P0": 1, "P1": 2, "P2": 1, "P3": 1, "P4": 1,
+    }
+    assert report["triage"]["untriaged"] == 1
+    assert report["dispositions"]["counts"]["unresolved"] == 1
+    assert report["dispositions"]["counts"]["unresolved_model_error"] == 1
+    assert report["dispositions"]["counts"]["unreviewed"] == 1
+    assert report["dispositions"]["counts"]["disputed"] == 1
+    assert report["dispositions"]["counts"]["suppressed"] == 1
+    assert report["dispositions"]["counts"]["false_positive"] == 1
 
 
-def test_render_table_exposes_remediation_actions():
-    table = _render_table([], "imported", [{
-        "action_id": "action-demo",
-        "package": "example-lib",
-        "version": "1.2.3",
-        "highest_priority": "P2",
-        "occurrence_count": 4,
-    }])
-    assert "action-demo" in table
-    assert "example-lib 1.2.3" in table
-    assert "occurrences=4" in table
+def test_terminal_summary_empty_population_has_explicit_zeros(
+    tmpdir_path, mem_db, monkeypatch,
+):
+    async def _empty_scan(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr("trident.cli._run_scan", _empty_scan)
+    result = CliRunner().invoke(cli, ["scan", tmpdir_path, "--quiet"])
+    assert result.exit_code == 0
+    assert {tier: _parse_count_line(result.output, tier) for tier in (
+        "P0", "P1", "P2", "P3", "P4",
+    )} == {tier: 0 for tier in ("P0", "P1", "P2", "P3", "P4")}
+    assert _parse_count_line(result.output, "Total") == 0
+    assert _parse_count_line(result.output, "Untriaged") == 0
+    assert _parse_count_line(result.output, "Unresolved") == 0
+
+
+def test_cli_summary_and_gate_follow_finalized_json_population(
+    tmpdir_path, mem_db, monkeypatch,
+):
+    """A report finding cannot disappear because a second DB query is stale."""
+    report = {
+        "findings": [{"id": "final-report-finding", "title": "Finalized P1", "priority": "P1"}],
+        "triage": {
+            "summary": {"by_tier": {"P0": 0, "P1": 1, "P2": 0, "P3": 0, "P4": 0}},
+            "untriaged": 0,
+        },
+        "dispositions": {"counts": {}},
+    }
+
+    async def _scan_without_rows(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr("trident.cli._run_scan", _scan_without_rows)
+    monkeypatch.setattr("trident.reporters.exporters.to_json", lambda _db, _job_id: report)
+    table = CliRunner().invoke(cli, [
+        "scan", tmpdir_path, "--format", "table", "--quiet", "--fail-on", "P1",
+    ])
+    assert table.exit_code == 1
+    assert _parse_count_line(table.output, "P1") == 1
+    assert _parse_count_line(table.output, "Total") == 1
+
+    machine = CliRunner().invoke(cli, [
+        "scan", tmpdir_path, "--format", "json", "--quiet", "--fail-on", "P1",
+    ])
+    assert machine.exit_code == 1
+    assert json.loads(machine.output)["findings"] == report["findings"]
+
+
+@pytest.mark.parametrize("output_format", ["json", "sarif"])
+def test_machine_output_is_uncontaminated_with_summary_population(
+    tmpdir_path, mem_db, monkeypatch, output_format,
+):
+    rows = [
+        {"priority": "P2", "title": "Machine-readable priority"},
+        {"priority": None, "title": "Machine-readable untriaged"},
+    ]
+    monkeypatch.setattr("trident.cli._run_scan", _reporting_stub(mem_db, rows))
+    result = CliRunner().invoke(cli, [
+        "scan", tmpdir_path, "--format", output_format, "--quiet",
+        "--severity-gate", "critical",
+    ])
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert "[trident]" not in result.output
+    if output_format == "json":
+        assert [finding["title"] for finding in payload["findings"]] == [
+            "Machine-readable priority", "Machine-readable untriaged",
+        ]
+    else:
+        results = payload["runs"][0]["results"]
+        assert [row["message"]["text"] for row in results] == [
+            "Machine-readable priority", "Machine-readable untriaged",
+        ]
+
+
+@pytest.mark.parametrize("output_format", ["table", "json", "sarif"])
+@pytest.mark.parametrize(("severity_gate", "expected_exit"), [("critical", 2), ("high", 2)])
+def test_reporting_formats_share_population_and_preserve_severity_gate(
+    tmpdir_path, mem_db, monkeypatch, output_format, severity_gate, expected_exit,
+):
+    rows = [
+        {"priority": "P1", "title": "High finding"},
+        {"priority": "P3", "title": "Low finding"},
+        {"priority": None, "title": "Untriaged finding"},
+        {"priority": "P0", "status": "disputed", "title": "Disputed candidate"},
+    ]
+    monkeypatch.setattr("trident.cli._run_scan", _reporting_stub(mem_db, rows))
+    result = CliRunner().invoke(cli, [
+        "scan", tmpdir_path, "--format", output_format, "--quiet",
+        "--severity-gate", severity_gate,
+    ])
+    assert result.exit_code == expected_exit
+
+    if output_format == "table":
+        assert {tier: _parse_count_line(result.output, tier) for tier in (
+            "P0", "P1", "P2", "P3", "P4",
+        )} == {"P0": 0, "P1": 1, "P2": 0, "P3": 1, "P4": 0}
+        assert _parse_count_line(result.output, "Total") == 2
+        assert _parse_count_line(result.output, "Untriaged") == 1
+        assert _parse_count_line(result.output, "Unresolved") == 0
+        assert "High finding" not in result.output
+    elif output_format == "json":
+        report = json.loads(result.output)
+        assert report["triage"]["summary"]["by_tier"] == {
+            "P0": 0, "P1": 1, "P2": 0, "P3": 1, "P4": 0,
+        }
+        assert report["triage"]["untriaged"] == 1
+        assert len(report["findings"]) == 3
+        assert len({finding["id"] for finding in report["findings"]}) == 3
+    else:
+        report = json.loads(result.output)
+        results = report["runs"][0]["results"]
+        assert [item["message"]["text"] for item in results] == [
+            "High finding", "Low finding", "Untriaged finding",
+        ]
+        assert len({item["partialFingerprints"]["primaryLocationLineHash"] for item in results}) == 3
 
 
 # ---------------------------------------------------------------------------

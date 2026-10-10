@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing tag to publish, for example v0.3.3"
+        description: "Existing tag to publish, for example v0.3.4"
         required: true
         type: string
       source_sha:
@@ -17,7 +17,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-and-verify:
@@ -60,7 +60,12 @@ jobs:
         run: python -m build --wheel --sdist
 
       - name: Verify distributions
-        run: python -m twine check dist/*
+        run: python -m twine check dist/*.whl dist/*.tar.gz
+
+      - name: Create and verify distribution checksums
+        run: |
+          sha256sum dist/*.whl dist/*.tar.gz | sed 's#  dist/#  #' > dist/SHA256SUMS.txt
+          (cd dist && sha256sum --check SHA256SUMS.txt)
 
       - name: Install wheel in a clean virtual environment
         run: |
@@ -86,6 +91,25 @@ jobs:
           name: trident-cli-package
           path: backend/dist/*
 
+  publish-release:
+    name: Publish verified package
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out approved release notes
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Download verified distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: trident-cli-package
+          path: backend/dist
+
       - name: Create GitHub release with distributions
         env:
           GH_TOKEN: ${{ github.token }}
@@ -95,4 +119,4 @@ jobs:
           set -euo pipefail
           NOTES_FILE="${GITHUB_WORKSPACE}/.github/releases/${RELEASE_VERSION#v}.md"
           test -f "${NOTES_FILE}"
-          gh release create "${RELEASE_TAG}" dist/* --notes-file "${NOTES_FILE}" --verify-tag
+          gh release create "${RELEASE_TAG}" backend/dist/* --notes-file "${NOTES_FILE}" --verify-tag

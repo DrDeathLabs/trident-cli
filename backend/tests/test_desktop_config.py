@@ -27,9 +27,18 @@ def test_sqlite_is_the_default_backend():
 
 def test_postgres_when_explicitly_set(monkeypatch):
     monkeypatch.setenv("TRIDENT_DB_BACKEND", "postgres")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "synthetic-postgres-password")
     db = DBConfig()
     assert db.backend == "postgres"
-    assert db.url.startswith("postgresql+psycopg2://")
+    assert db.url.render_as_string(hide_password=False).startswith("postgresql+psycopg2://")
+    assert "synthetic-postgres-password" not in str(db.url)
+
+
+def test_postgres_requires_non_default_password(monkeypatch):
+    monkeypatch.setenv("TRIDENT_DB_BACKEND", "postgres")
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    with pytest.raises(ValueError, match="POSTGRES_PASSWORD is required"):
+        _ = DBConfig().url
 
 
 def test_sqlite_backend_produces_sqlite_url(tmp, monkeypatch):

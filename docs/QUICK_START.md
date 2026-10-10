@@ -19,7 +19,7 @@ source .venv/bin/activate
 .\.venv\Scripts\Activate.ps1
 
 # Install the downloaded GitHub release wheel, or use the source checkout.
-python -m pip install path/to/trident-0.3.3-py3-none-any.whl
+python -m pip install path/to/trident-0.3.4-py3-none-any.whl
 trident --help
 ```
 
@@ -136,21 +136,25 @@ You will see live progress as each tool runs, then the council deliberation, the
   ✓  Guards complete   P0: 2  P1: 18  P2: 21  P3: 11  P4: 10
 
 Trident Scan - my-project
-──────────────────────────────────────────────────────────────
-  Tier │ Count │ Sample
-──────────────────────────────────────────────────────────────
-  P0   │     2 │ python.flask.security.insecure-deserialization  (app.py:36)
-  P1   │    18 │ yaml.github-actions.security.github-actions-...  (ci.yml:12)
-  P2   │    21 │ python.flask.security.audit.app-run-param-co...  (app.py:123)
-  P3   │    11 │ yaml.security.configuration.policy...  (manifests/app.yml:21)
-  P4   │    10 │ ...
-──────────────────────────────────────────────────────────────
-  Total confirmed: 62
+P0: 2
+P1: 18
+P2: 21
+P3: 11
+P4: 10
+Total: 62
+Untriaged: 0
+Unresolved: 0
 ```
 
-Exit code 0 means no confirmed finding at or above the severity gate (default:
-`high`). Exit code 1 means one or more confirmed findings reached the gate.
-Exit code 2 means ingestion or scan failure. Scanner candidates refuted or
+The terminal summary's prioritized total equals the sum of P0-P4. Confirmed
+findings without a priority and unresolved findings are reported separately;
+full finding evidence and explanations are available in JSON and SARIF.
+
+Exit code 0 means review completed with no prioritized confirmed finding at or
+above the severity gate (default: `high`). Exit code 1 means one or more
+prioritized confirmed findings reached the gate. Exit code 2 means ingestion,
+scan, or report failure, or confirmed findings remain untriaged or unresolved.
+Exit 2 takes precedence over the severity gate. Scanner candidates refuted or
 otherwise not retained by Council/deliberation are kept as audit evidence but
 are not final actionable findings; automatic triage only prioritizes retained
 confirmed findings.

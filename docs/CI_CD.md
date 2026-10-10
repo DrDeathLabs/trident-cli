@@ -8,9 +8,9 @@ gate, and a scan failure.
 
 | Code | Meaning |
 |------|---------|
-| 0 | No confirmed findings at or above the severity gate |
-| 1 | Confirmed findings at or above the severity gate |
-| 2 | Ingestion or scan error |
+| 0 | Review completed; no prioritized confirmed findings at or above the gate |
+| 1 | At least one prioritized confirmed finding is at or above the gate |
+| 2 | Scan/ingestion/report error, or confirmed findings remain untriaged or unresolved |
 
 The default gate is high (P1 and above).
 
@@ -100,8 +100,9 @@ JSON is useful for custom gates and downstream processing:
 trident scan . --format json --output-file trident-results.json --quiet
 ~~~
 
-The process exit code still carries the gate result; the output file contains
-the confirmed findings and triage metadata. To retain the complete worked
+Exit 2 takes precedence over priority-gate exit 1 because the analysis is
+incomplete. The output file is still written when reporting succeeds and
+contains retained findings and triage metadata. To retain the complete worked
 queue as a separate artifact, add `--triage-output-file`:
 
 ~~~bash

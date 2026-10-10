@@ -38,7 +38,7 @@ trail. They also document where human review remains mandatory.
 ## CI and release maintainers
 
 - [CI and SARIF](CI_CD.md) - package checks, SARIF upload, and exit-code policy.
-- [Open-source readiness](OPEN_SOURCE_READINESS.md) - public-release gates,
+- [Public release readiness](OPEN_SOURCE_READINESS.md) - publication gates,
   licensing, reproducibility, and known prerequisites.
 - [Troubleshooting](TROUBLESHOOTING.md) - installation, tool, backend, and scan
   diagnostics.
@@ -57,6 +57,8 @@ trail. They also document where human review remains mandatory.
 - [Limitations](LIMITATIONS.md) - what Trident cannot establish on its own.
 - [Security policy](../SECURITY.md) - vulnerability reporting and sensitive data
   handling.
+- [Privacy and data handling](PRIVACY.md) - LLM processing, local storage,
+  retention, and operator responsibilities.
 - [Third-party notices](../THIRD-PARTY-NOTICES.md) - scanner licensing.
 
 ## Capability status
