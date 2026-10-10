@@ -1,109 +1,50 @@
-# Agentic exploration
+# Agentic expert exploration
 
-Standard mode gives each reviewer the code around a finding. Agentic
-exploration is an optional second step for contested findings: the reviewer can
-inspect more of the scanned workspace before reaching a verdict.
+Agentic mode lets an expert inspect more of the scanned workspace during
+cross-examination. It can read files, search for patterns, find definitions,
+and inspect callers. Use it when a disputed decision depends on context beyond
+the fixed evidence window.
 
-## What it does
+Agentic mode is off by default. It adds model requests and can lengthen a scan.
+It only applies to the configured review workflow; it does not run the
+application or access the network through its file-inspection tools.
 
-During cross-examination, reviewers can:
+## Enable exploration
 
-- read files in the workspace;
-- search for patterns across the codebase;
-- trace where a function is called; and
-- find related definitions and references.
+Persist the setting:
 
-This helps when the answer depends on code in more than one file. For example,
-the reviewer can trace user input back to its source, check whether it was
-sanitized, and see whether the flagged function is reachable from an endpoint.
-
-Agentic exploration is supported, but it is off by default. That keeps ordinary
-scans from spending extra tokens and time on findings that do not need deeper
-context.
-
-## When to use it
-
-| Situation | Recommendation |
-|-----------|----------------|
-| Large codebase with complex data flows | Use agentic exploration |
-| Simple single-file project | Standard mode is usually enough |
-| CI scan where cost and time matter | Use standard mode |
-| High-impact or disputed finding | Consider agentic exploration |
-| Finding with `reachability: unknown` | Use it when more context may resolve reachability |
-
-Agentic exploration increases LLM calls, scan time, and cost. It is most useful
-when a fixed code window is not enough to settle a finding.
-
-## Enable it
-
-### Persistent config
-
-```bash
+```text
 trident config set scan.agentic true
 ```
 
-Or enable it for one shell invocation:
+Or set it in the environment for one process:
 
 ```bash
 AGENTIC=true trident scan .
 ```
 
-## Model choice
+`AGENT_MAX_STEPS` limits the number of tool steps per reviewer. The default is
+six. Reducing the value limits exploration; increasing it allows more file
+queries and model work. Review the final decision and the files cited by the
+model.
 
-Use a model that handles multi-step reasoning and tool use well. For local
-models:
+## Available inspection tools
 
-```bash
-trident config set llm.expert_model qwen2.5-coder:32b
-```
+| Tool | Operation |
+| --- | --- |
+| `read_file` | Read a workspace file or bounded line range. |
+| `search_pattern` | Search workspace text with a bounded pattern. |
+| `find_definition` | Locate a symbol definition. |
+| `find_callers` | Find detected callers. |
+| `list_directory` | List workspace entries. |
 
-For cloud:
-
-```bash
-trident config set llm.backend anthropic
-trident config set llm.expert_model claude-sonnet-5
-```
-
-## Available tools
-
-These tools are available during cross-examination when agentic exploration is active:
-
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read the contents of a file in the workspace |
-| `search_pattern` | Search for a pattern across the workspace |
-| `find_definition` | Find where a symbol is defined |
-| `find_callers` | Find all call sites for a function |
-| `list_directory` | List the contents of a directory |
-
-Tool calls are bounded. Reviewers cannot read files outside the scanned
-workspace, and the exploration tools have no network access.
-
-## Cost and limits
-
-| Dimension | Standard mode | Agentic exploration |
-|-----------|---------------|---------------------|
-| LLM calls per contested finding | 2-4 | 5-20+ (depends on exploration depth) |
-| Scan time for a medium codebase | 3-8 min | 8-25 min |
-| Verdict accuracy on complex findings | Good | Better |
-| Cost on cloud LLM | Low | Higher |
-
-Agentic exploration does not change the independent review phase. It activates
-only during cross-examination. If findings are uncontested, it adds no calls.
-
-## Limit exploration
-
-To cap the number of tool calls per finding:
-
-```bash
-AGENT_MAX_STEPS=10 trident scan .
-```
-
-The default is six steps per reviewer. A lower cap reduces cost but may leave a
-complex finding unresolved. A higher cap can increase scan time.
+Access is constrained to the scan workspace. Static call and definition search
+can miss dynamic dispatch, reflection, generated code, and framework-specific
+entry points. The expert can still misinterpret the files it reads.
 
 ## See also
 
-- [AI council](AI_COUNCIL.md) - independent review and cross-examination
-- [Configuration](CONFIGURATION.md) - `scan.agentic` and related config keys
-- [LLM backends](LLM_BACKENDS.md) - model setup
+- [Council review](AI_COUNCIL.md)
+- [Scanning](SCANNING.md)
+- [Privacy](PRIVACY.md)
+- [Configuration](CONFIGURATION.md)

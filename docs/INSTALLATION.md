@@ -1,159 +1,111 @@
 # Installation
 
-Install Trident in a virtual environment when possible. The package and its
-scanner tools are separate pieces, so package installation alone does not
-install every scanner binary.
-
-## Prerequisites
-
-- Python 3.11 or later
-- pip
-- Internet access when installing the package or downloading scanner tools
-- An LLM backend: the Ollama backend through a configured gateway, or an
-  OpenAI/Anthropic account
+This guide installs the Trident CLI and its scanner tools on a workstation or
+CI runner. Trident requires Python 3.11 or newer. A virtual environment keeps
+its Python dependencies separate from system packages.
 
 ## Install the CLI
 
-### From a GitHub release artifact
+1. Open the [GitHub Releases page](https://github.com/DrDeathLabs/trident-cli/releases).
+2. Download the wheel asset for your chosen release and save it in a working
+   directory.
+3. Create a virtual environment and install the downloaded wheel.
 
-~~~bash
-python -m pip install path/to/trident-0.3.4-py3-none-any.whl
-~~~
+Linux or macOS:
 
-Download the wheel from the GitHub release, then install that local file.
-Trident 0.3.4 is distributed through an explicitly approved GitHub release
-artifact. The PyPI
-name `trident` is already used by another project, so `pip install trident`
-is not a supported installation command for this release.
-
-### From this repository checkout
-
-The package lives in backend/:
-
-~~~bash
-cd backend
-python -m pip install .
-~~~
-
-For development, use an editable install with the dev dependencies:
-
-~~~bash
-cd backend
-python -m pip install -e ".[dev]"
-~~~
-
-Verify the installation:
-
-~~~bash
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install ./trident-*-py3-none-any.whl
 trident --version
 trident --help
-~~~
+```
 
-A virtual environment is recommended:
+Windows PowerShell:
 
-~~~bash
-python -m venv .venv
-
-# macOS/Linux:
-source .venv/bin/activate
-
-# Windows PowerShell:
+```powershell
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install (Get-ChildItem .\trident-*-py3-none-any.whl | Select-Object -First 1 -ExpandProperty FullName)
+trident --version
+trident --help
+```
 
-python -m pip install .
-~~~
+The wildcard expects one matching wheel in the current directory. If several
+are present, name the file you downloaded explicitly. The wheel includes
+Trident's Python runtime dependencies. It does not bundle the external scanner
+programs.
 
 ## Install scanner tools
 
-Install the external scanner tools managed by Trident:
+Run the tool installer from the active virtual environment:
 
-~~~bash
-trident install-tools
-~~~
-
-The command installs or locates the configured tools:
-
-- Binary releases: osv-scanner, TruffleHog, Gitleaks, Grype, and Trivy
-- Python tools: Semgrep, Bandit, Checkov, and pip-audit
-- Go tools: gosec and govulncheck, using an existing Go installation or a
-  user-data bootstrap runtime
-- npm-audit: used when Node.js and npm are already installed; Node.js is not
-  installed by Trident
-
-Check tool status without changing anything:
-
-~~~bash
-trident install-tools --check
-~~~
-
-Verify all twelve tools:
-
-~~~bash
-trident install-tools --verify
-~~~
-
-Pre-download vulnerability databases and warm caches:
-
-~~~bash
-trident install-tools --warmup
-~~~
-
-The recommended first-time command combines verification and cache warmup:
-
-~~~bash
+```bash
 trident install-tools --verify --warmup
-~~~
+trident install-tools --check
+```
 
-The installer scripts in scripts/ create a virtual environment, install the
-CLI from backend/, and invoke these scanner-tool commands. They do not build
-or copy any other application.
+The first command installs managed scanner binaries, verifies availability,
+and warms supported vulnerability databases. The check command reports what is
+available without installing tools.
 
-Tools are stored in the platform-appropriate user data directory:
+The adapters cover Semgrep, Bandit, gosec, Checkov, Grype, OSV-Scanner, Trivy,
+pip-audit, npm-audit, govulncheck, Gitleaks, and TruffleHog. Some tools need an
+additional runtime:
 
-| Platform | Default tools directory |
-|----------|-------------------------|
-| Windows | %LOCALAPPDATA%/Trident/Trident/bin |
-| macOS | ~/Library/Application Support/Trident/bin |
-| Linux | ~/.local/share/Trident/bin |
+| Tool group | Requirement |
+| --- | --- |
+| Python scanners | Active Python environment; install optional scanner dependencies or use the managed installer. |
+| npm-audit | Node.js and npm installed separately. |
+| gosec and govulncheck | Go installed or the managed Go bootstrap runtime. |
+| Database-backed scanners | Network access during database download or refresh. |
 
-## Configure an LLM
+Tool availability depends on platform and scanner support. Review the output
+from `trident install-tools --check`; a scan only runs tools available to the
+selected workflow. See [Tools](TOOLS.md) for tool-specific behavior.
 
-Ollama is the default backend:
+## Configure an LLM backend
 
-~~~bash
-trident config set llm.backend ollama
-trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model nemotron-3-super:cloud
-~~~
+Trident supports Ollama, OpenAI-compatible APIs, and Anthropic. Choose a
+backend that is authorized to process the code and reports you will submit.
+Configuration and credentials are covered in [LLM backends](LLM_BACKENDS.md)
+and [Privacy](PRIVACY.md).
 
-The default model is Ollama Cloud-tagged. The configured Ollama gateway may be
-local, but that does not mean the default model executes on the local host.
+For a custom OpenAI-compatible endpoint, start with the dedicated
+[Connecting Trident to a Custom LLM Endpoint or Proxy](CONNECTING_LLM_ENDPOINTS.md)
+guide. It covers local HTTP, intentional private-network HTTP, HTTPS, model
+aliases, credentials, corporate certificates, and troubleshooting.
 
-See [LLM_BACKENDS](LLM_BACKENDS.md) for cloud backend setup and data-handling
-considerations.
+## Install from a source checkout
 
-## Optional corpus model
+Developers can install the package from the repository's `backend` directory:
 
-The corpus guard can be built from vulnerability feeds:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # PowerShell: .\.venv\Scripts\Activate.ps1
+python -m pip install -e "backend[dev]"
+```
 
-~~~bash
-trident model refresh
-~~~
-This is optional; scans work without it, with the corpus guard inactive.
+See [Development](DEVELOPMENT.md) for tests and build commands.
 
-## Platform notes
+## Verify the installation
 
-The CLI stores its SQLite database, downloaded tools, calibration data, and
-temporary workspaces under user data directories. Windows PowerShell, Linux,
-and WSL are validated release paths. Other platforms are conditional until
-their native tool downloads and subprocess behavior are tested. No fixed
-temporary directory is required for CLI scan workspaces.
+```bash
+trident --version
+trident --help
+trident config --help
+trident scan --help
+trident install-tools --check
+```
 
-The optional corpus data location is controlled by
-CALIBRATION_DATA_DIR; set it to a writable path when the platform does not
-provide the default location:
+Then configure a provider and run a scan against an authorized, small
+repository. A successful command confirms the CLI ran; inspect the report and
+provider request logs to confirm that the intended scanners and LLM endpoint
+were used.
 
-~~~powershell
-$env:CALIBRATION_DATA_DIR = "$env:LOCALAPPDATA\Trident\calibration"
-trident model refresh
-~~~
+## See also
+
+- [Quick start](QUICK_START.md)
+- [Scanning](SCANNING.md)
+- [Custom endpoint guide](CONNECTING_LLM_ENDPOINTS.md)
+- [Troubleshooting](TROUBLESHOOTING.md)

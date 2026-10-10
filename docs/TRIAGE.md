@@ -1,33 +1,23 @@
-# Triage - From Alert Flood to Worked Queue
+# Finding triage and P0-P4 priorities
 
-Trident runs automatic triage after council review. This is the step that turns
-a retained finding into an operational decision: not just whether it is
-severe in the abstract, but how urgently this specific issue should be worked in
-this codebase.
+Trident runs triage after Council review. It assigns a remediation priority to
+each finding retained as `confirmed` and records the factors behind that
+priority.
 
-The LLM assesses explicit factors: impact, attack vector, exploitability, fix
-effort, and reachability context. Deterministic code then applies the triage
-rubric, evidence-based correction adjustments, and attack-chain context to
-compute one of five operational priority tiers, P0-P4. The model is not asked
-to emit an opaque P0-P4 label directly.
+The model proposes impact, attack vector, exploitability, fix effort, and a
+rationale. Deterministic code applies the P0-P4 rubric, source reachability,
+evidence guards, and eligible attack-chain adjustments. Fix effort is recorded
+for remediation planning; it does not set the P0-P4 tier directly.
 
-Scanner output is intentionally a candidate set: scanner false positives are
-expected and are useful recall evidence. Council/deliberation is the validity
-gate: its verdicts retain, refute, dispute, or otherwise classify candidates
-before the normal triage path. Triage receives retained `confirmed` findings
-and prioritizes them for the operational queue; it does not decide whether the
-original scanner candidate is a false positive. False-positive and out-of-scope
-quality-finding counts and their evidence remain available in JSON/SARIF
-properties and the full triage sidecar. A `confirmed` status is the workflow's
-retained-for-remediation state. It is not a universal claim that the scanner
-record is factually or source-level proven. Imported SonarQube `CODE_SMELL`
-records are classified as `out_of_scope`, not as false positives: the original
-Sonar finding may be valid, but it is not a security remediation item. For
-report-only imports, the queue is based on imported scanner evidence and
-reachability is `unknown`. A triage decision is not a substitute for authorized
-human review.
-The adjustments described here are triage correction mechanisms. They are not
-runtime safety controls, execution blockers, or security approval gates.
+Scanner records are candidate evidence. Council review classifies candidates
+before triage. False-positive and out-of-scope records and their evidence are
+retained in disposition metadata and the full triage sidecar. A `confirmed`
+finding is retained for remediation work; it is not a universal claim that the
+reported condition has been reproduced or proven exploitable. SonarQube
+`CODE_SMELL` records are classified as `out_of_scope`. For report-only imports,
+reachability remains `unknown`. Review important results against the source and
+deployment before making a security decision. Triage adjustments are not
+runtime controls or security approval gates.
 
 ---
 
@@ -45,7 +35,9 @@ runtime safety controls, execution blockers, or security approval gates.
 
 ## Tier computation rubric
 
-Tiers are computed from three dimensions. The combination of all three determines the final tier.
+The model proposes impact, attack vector, and exploitability. The rank
+combination below determines the base tier. Deterministic guards and eligible
+chain evidence can then adjust it.
 
 ### Impact ranks
 
@@ -93,7 +85,7 @@ Tiers are computed from three dimensions. The combination of all three determine
 ### Chain bump
 
 If a finding participates in an attack chain (`triage.in_chain = true`) and is
-not already P0, it normally is bumped up one tier. A report-derived chain may
+below P0, eligible chain evidence can raise it one tier. A report-derived chain may
 not create P0 or P1 unless it contains multiple distinct confirmed findings or
 source-grounded reachable evidence. Trident keeps the path and records the
 suppression reason when that condition is not met. A single imported record
@@ -136,9 +128,9 @@ reachability, deterministic adjustments, and chain reasoning.
 
 ## Validation scope
 
-The approved public validation summary, including repeatability and import
-accounting, is maintained in [VALIDATION.md](VALIDATION.md). It is evidence
-within the stated test scope, not a universal performance or correctness claim.
+The [validation guide](VALIDATION.md) describes test layers and the limits of
+local acceptance evidence. A passing fixture does not establish universal
+detection or triage correctness.
 
 ---
 
@@ -202,7 +194,9 @@ record.
 }
 ```
 
-This P1 finding has `in_chain: true`, meaning it participates in an attack chain. If it were originally rated P2, the chain bump elevated it to P1.
+This illustrative P1 finding has `in_chain: true`, meaning it participates in
+an attack chain. The final JSON includes the base factors, applied guards, and
+chain eligibility needed to understand the priority.
 
 No guards adjusted this finding (all guard fields are null). The reachability
 guard confirmed it is `reachable` from a detected external entry point.

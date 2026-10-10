@@ -166,53 +166,29 @@ def _check_corpus_guard(quiet: bool) -> None:
 @click.group(context_settings={"max_content_width": 100})
 @click.version_option(version=__version__, prog_name="trident")
 def cli():
-    """Trident - AI-assisted code security analysis engine.
+    """Run scanners and evidence review, then report confirmed findings.
 
-    Runs 12 scanner tools (SAST, SCA, secrets), then an AI council of security
-    relevant domain experts review findings. Three guards (class, corpus, reachability)
-    automatically correct severity over- and under-escalations.
+    Install available scanner tools with ``trident install-tools --verify``.
+    Configure Ollama, an OpenAI-compatible API, or Anthropic, then run
+    ``trident scan PATH`` on a target you are authorized to assess.
 
     \b
-    First-time setup (Ollama backend; default model: nemotron-3-super:cloud):
-      trident install-tools --verify --warmup
-      trident config set llm.backend ollama
-      trident config set llm.expert_model nemotron-3-super:cloud
+    Examples:
       trident scan .
-      trident model refresh                     (optional - enables corpus guard)
+      trident scan . --format json --output-file results.json
+      trident scan . --format sarif --output-file results.sarif --quiet
+      trident scan . --backend openai --model security-expert
+      trident scan . --backend openai --openai-base-url http://127.0.0.1:8000/v1
+      trident config set llm.openai_api_key
 
     \b
-    Optional alternative backends:
-      trident config set llm.backend openai
-      set OPENAI_API_KEY in the environment for an OpenAI-compatible backend
-      trident config set llm.backend anthropic
+    Run ``trident help <topic>`` for setup, backends, gateway, config, output,
+    CI, experts, guards, or scanner details. Secret values are masked in
+    configuration output.
 
     \b
-    Run a scan:
-      trident scan .                            table output, default gate
-      trident scan . --format sarif > out.sarif SARIF for GitHub code scanning
-      trident scan . --severity-gate critical   exit 1 only on critical findings
-      trident scan . --backend anthropic        use Anthropic instead of Ollama
-
-    \b
-    Configure:
-      trident config show                       all current settings + sources
-      trident config set scan.severity_gate high
-      trident config list                       all available keys
-
-    \b
-    Deep-dive help topics (run 'trident help <topic>'):
-      setup      first-time install walkthrough
-      backends   Ollama / OpenAI / Anthropic setup
-      ci         GitHub Actions, GitLab CI, SARIF upload
-      config     full config key reference
-      output     table / json / sarif format details
-      guards     what the three AI guards do
-      experts    what each AI council expert reviews
-      tools      all 12 scanner tools explained
-
-    \b
-    Exit codes: 0 = complete and below gate  |  1 = prioritized finding at gate
-                2 = scan failure or incomplete review (untriaged/unresolved)
+    Exit codes: 0 = review completed below the gate; 1 = prioritized finding
+    meets the gate; 2 = scan failure or incomplete review.
     """
 
 
@@ -369,6 +345,11 @@ def inspect(report: str, mapping_path: str | None, write_mapping: str | None,
     default=None,
     help="LLM provider, including an OpenAI-compatible /v1 gateway. Overrides config and env.",
 )
+@click.option(
+    "--openai-base-url",
+    default=None,
+    help="OpenAI-compatible API base URL for this scan. Requires --backend openai or an OpenAI config.",
+)
 @click.option("--model", default=None, help="Model alias for all scan LLM roles. Overrides config and env.")
 @click.option("--target-name", default=None, help="Display name for this scan target.")
 @click.option("--max-iterations", default=None, type=int, help="Override max scan iterations.")
@@ -395,6 +376,7 @@ def scan(
     severity_gate: str | None,
     fail_on: str | None,
     backend: str | None,
+    openai_base_url: str | None,
     model: str | None,
     target_name: str | None,
     max_iterations: int | None,
@@ -417,6 +399,7 @@ def scan(
       trident scan --input-file sonar.json --input-file dependency-check.json
       trident scan . --format sarif > results.sarif
       trident scan ./myrepo --backend openai --model security-expert
+      trident scan ./myrepo --backend openai --openai-base-url http://127.0.0.1:8000/v1
       trident scan ./myrepo --severity-gate critical
       OPENAI_BASE_URL=http://127.0.0.1:8000/v1 trident scan . --backend openai --format sarif
 
@@ -466,15 +449,40 @@ def scan(
         except Exception:
             fail_on_tier = "P1"
 
-    # Apply the CLI provider override to the process settings before the scan
-    # worker constructs its lazy LLM backend.
+    # Validate and apply CLI provider settings before the scan worker creates
+    # its lazy LLM backend. Reject invalid URL overrides before mutating the
+    # process-wide settings object.
+    if openai_base_url:
+        effective_backend = backend or settings.llm.backend
+        if effective_backend.lower() != "openai":
+            raise click.UsageError("--openai-base-url requires the openai backend")
+        from trident.llm.openai_backend import _validate_base_url
+
+        try:
+            openai_base_url = _validate_base_url(openai_base_url)
+        except (TypeError, ValueError) as exc:
+            raise click.UsageError("--openai-base-url must be a valid HTTP(S) base URL") from exc
+
+    previous_llm_settings = {}
     if backend:
+        previous_llm_settings["backend"] = settings.llm.backend
         settings.llm.backend = backend
+    if openai_base_url:
+        previous_llm_settings["openai_base_url"] = settings.llm.openai_base_url
+        settings.llm.openai_base_url = openai_base_url
     if model:
+        for attribute in ("default_model", "judge_model", "redteam_model", "triage_model"):
+            previous_llm_settings[attribute] = getattr(settings.llm, attribute)
         settings.llm.default_model = model
         settings.llm.judge_model = model
         settings.llm.redteam_model = model
         settings.llm.triage_model = model
+    if previous_llm_settings:
+        def _restore_llm_settings() -> None:
+            for attribute, value in previous_llm_settings.items():
+                setattr(settings.llm, attribute, value)
+
+        ctx.call_on_close(_restore_llm_settings)
 
     # Load quiet from config if not set via flag
     if not quiet:
@@ -667,12 +675,13 @@ def help_cmd(topic: str):
     """Show detailed help for a topic.
 
     \b
-    Topics: setup, backends, ci, config, output, guards, experts, tools
+    Topics: setup, backends, gateway, ci, config, output, guards, experts, tools
     \b
     Examples:
       trident help
       trident help setup
       trident help backends
+      trident help gateway
       trident help ci
     """
     from trident.help_texts import render_topic

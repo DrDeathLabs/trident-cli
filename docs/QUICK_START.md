@@ -1,200 +1,97 @@
-# Quick Start
+# Quick start
 
-This guide gets you from zero to a completed scan in under 10 minutes,
-assuming Python 3.11+ is already installed. Trident uses the Ollama backend by
-default; its gateway may be local while the default model,
-`nemotron-3-super:cloud`, is hosted through Ollama Cloud.
+This walkthrough configures a model backend, runs a scan, and reads its
+reports. Install the CLI and the scanner tools first; see
+[Installation](INSTALLATION.md).
 
----
+## 1. Configure a model provider
 
-## Step 1 - Install Trident
-
-```bash
-python -m venv .venv
-
-# macOS/Linux:
-source .venv/bin/activate
-
-# Windows PowerShell:
-.\.venv\Scripts\Activate.ps1
-
-# Install the downloaded GitHub release wheel, or use the source checkout.
-python -m pip install path/to/trident-0.3.4-py3-none-any.whl
-trident --help
-```
-
-You should see the Trident help output listing the available commands (`scan`, `config`, `model`, `install-tools`, `help`).
-
-To triage an existing security report without running scanners, inspect it first
-and then import it:
+For an OpenAI-compatible gateway, set its base URL and the model alias that the
+gateway recognizes:
 
 ```bash
-trident inspect findings.json --format json
-trident scan --input-file findings.json --format json
+trident config set llm.backend openai
+trident config set llm.openai_base_url https://llm-gateway.example.com/v1
+trident config set llm.expert_model security-expert
+trident config set llm.openai_api_key
 ```
 
-For a vendor schema that needs explicit mapping, use `--mapping FILE`; use
-`--no-schema-ai` when schema inference must remain fully deterministic.
+The hostname is reserved for examples. Replace it with the actual endpoint.
+The key command opens a hidden prompt. If the gateway does not require
+authentication, leave the key unset or clear a previously saved key with
+`trident config reset llm.openai_api_key`.
 
----
+You can also use Ollama or Anthropic. See [LLM backends](LLM_BACKENDS.md) for
+provider setup. For HTTP or HTTPS gateways, read
+[Connecting Trident to a Custom LLM Endpoint or Proxy](CONNECTING_LLM_ENDPOINTS.md)
+before sending source data.
 
-## Step 2 - Install the 12 security tools
+## 2. Run an authorized scan
+
+From the repository directory:
 
 ```bash
-trident install-tools
+trident scan .
 ```
 
-This takes 3-10 minutes depending on your connection. You will see each tool download and confirm:
+Trident prepares the workspace, runs available scanners, correlates their
+findings, asks the configured model to review candidates, checks for attack
+chains, and triages findings that remain confirmed. Scanner and model
+availability affects which stages can complete.
 
-```
-  osv-scanner: OK -> .../bin/osv-scanner.exe
-  trufflehog: OK  -> .../bin/trufflehog.exe
-  gitleaks: OK    -> .../bin/gitleaks.exe
-  grype: OK       -> .../bin/grype.exe
-  trivy: OK       -> .../bin/trivy.exe
-  go runtime: OK  -> .../bin/go_runtime/go/bin/go.exe
-  gosec: OK
-  govulncheck: OK
-  semgrep: OK
-  bandit: OK
-  checkov: OK
-  pip-audit: OK
-  npm-audit: OK
-
-[trident] 12 tool(s) ready
-```
-
-Verify everything is working:
+To import existing reports without running scanner subprocesses:
 
 ```bash
-trident install-tools --verify
+trident scan --input-file sonar-report.json --format table
+trident scan --input-file sonar-report.json \
+  --input-file dependency-check.json --format json \
+  --output-file results.json
 ```
 
----
+Without `--source-dir`, imported findings are report-only. Trident preserves
+the imported evidence and provenance but cannot infer that the issue is
+reachable in the source tree.
 
-## Step 3 - Configure your LLM
+## 3. Read the result
 
-Trident works with the Ollama backend, OpenAI, or Anthropic. For this quick
-start, Ollama is assumed. The default `nemotron-3-super:cloud` model is
-Ollama Cloud-tagged; the gateway can be local without making model execution
-local. Pull a model only when intentionally using a local-only model:
+The terminal shows counts for P0 through P4, including zeros, followed by the
+prioritized total, untriaged count, and unresolved count. These counts use the
+finalized finding population. Confirmed findings without a valid priority are
+untriaged. Findings for which review could not reach a final disposition are
+unresolved. Either state means the review is incomplete.
+
+For per-finding evidence, save JSON or SARIF:
 
 ```bash
-ollama pull gemma3:12b
+trident scan . --format json --output-file results.json
+trident scan . --format sarif --output-file results.sarif
 ```
 
-Configure Trident:
+The JSON report contains finding details, review disposition, source
+provenance, triage rationale, and chain context. SARIF maps retained findings
+to locations and priority metadata. Use `--triage-output-file` to write the
+full worked remediation queue.
 
-```bash
-trident config set llm.backend ollama
-trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model nemotron-3-super:cloud
-```
+## 4. Check command status
 
-Confirm:
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Review completed below the configured severity gate. |
+| `1` | A prioritized confirmed finding meets the configured gate. |
+| `2` | A scan/report error occurred, or confirmed findings remain untriaged or unresolved. |
 
-```bash
-trident config show
-```
+Exit code 2 indicates incomplete review and takes precedence over the
+severity gate. Use `trident config get scan.severity_gate` to inspect the
+stored gate. A scan can exit 0 while containing lower-priority findings if
+those findings fall below the configured threshold.
 
-For OpenAI or Anthropic, see [LLM_BACKENDS](LLM_BACKENDS.md).
+## 5. Common checks
 
----
-
-## Step 4 - (Optional) Build corpus-profile triage data
-
-The corpus-profile stage adds historical CWE context to automatic triage. It
-helps align model factors with the expected tier for well-represented weakness
-classes. Skip this step now and run it later - scans still work, but this
-optional adjustment stage is inactive.
-
-```bash
-trident model refresh
-```
-
-This takes approximately 30 minutes. It downloads NVD, EPSS, KEV, ExploitDB,
-CWE, CISA VulnRichment, and OSV data, computes local CWE profiles, and builds
-the separately reported statistical artifact. Run it once; the local data
-persists until you call `refresh` again.
-
----
-
-## Step 5 - Run a scan
-
-```bash
-trident scan /path/to/your/code
-```
-
-You will see live progress as each tool runs, then the council deliberation, then the final table:
-
-```
-  ✓  semgrep         47 findings  12.1s
-  ✓  bandit          18 findings   1.8s
-  ✓  trivy           91 findings  22.4s
-  ...
-  ✓  Council complete  confirmed: 62  refuted: 31
-  ✓  Guards complete   P0: 2  P1: 18  P2: 21  P3: 11  P4: 10
-
-Trident Scan - my-project
-P0: 2
-P1: 18
-P2: 21
-P3: 11
-P4: 10
-Total: 62
-Untriaged: 0
-Unresolved: 0
-```
-
-The terminal summary's prioritized total equals the sum of P0-P4. Confirmed
-findings without a priority and unresolved findings are reported separately;
-full finding evidence and explanations are available in JSON and SARIF.
-
-Exit code 0 means review completed with no prioritized confirmed finding at or
-above the severity gate (default: `high`). Exit code 1 means one or more
-prioritized confirmed findings reached the gate. Exit code 2 means ingestion,
-scan, or report failure, or confirmed findings remain untriaged or unresolved.
-Exit 2 takes precedence over the severity gate. Scanner candidates refuted or
-otherwise not retained by Council/deliberation are kept as audit evidence but
-are not final actionable findings; automatic triage only prioritizes retained
-confirmed findings.
-
----
-
-## Step 6 - Explore the results
-
-### JSON output (scan plus triage)
-
-```bash
-trident scan /path/to/your/code --format json > results.json
-```
-
-The JSON contains a compact top-level triage summary, per-finding triage
-metadata (`fix_effort`, `attack_vector`, `exploitability`), and `attack_chains`.
-For the complete worked queue grouped by P0-P4, save a triage sidecar:
-
-```bash
-trident scan /path/to/your/code --format json \
-  --output-file results.json --triage-output-file triage.json
-```
-
-### SARIF for GitHub Code Scanning
-
-```bash
-trident scan /path/to/your/code --format sarif > results.sarif
-```
-
-Upload `results.sarif` to GitHub's Security tab via `github/codeql-action/upload-sarif`.
-
----
-
-## Next steps
-
-| Goal | Document |
-|------|----------|
-| Understand what P0-P4 means | [TRIAGE](TRIAGE.md) |
-| See the full JSON schema | [OUTPUT_FORMATS](OUTPUT_FORMATS.md) |
-| Integrate into GitHub Actions or GitLab CI | [CI_CD](CI_CD.md) |
-| Understand why a finding was rated as it was | [GUARDS](GUARDS.md) |
-| Use a different LLM | [LLM_BACKENDS](LLM_BACKENDS.md) |
-| See all scan options | [SCANNING](SCANNING.md) |
+- `trident install-tools --check` shows scanner availability.
+- `trident config get llm.backend` and `trident config get
+  llm.openai_base_url` show effective configured values and their source.
+- `trident config get llm.openai_api_key` masks the key.
+- `trident scan --help` lists input, output, backend, gate, and per-scan
+  options.
+- See [Troubleshooting](TROUBLESHOOTING.md) for connection, authentication,
+  scanner, and report errors.

@@ -1,94 +1,96 @@
 # Privacy and data handling
 
-Trident is a local, single-operator CLI. Its local files are not encrypted by
-Trident. Use it only on systems and code you are authorized to analyze, and
-protect reports and data directories under your organization's retention rules.
+Trident runs on the local computer, but a configured language model or
+scanner can communicate with remote services. Before a scan, decide which
+code, reports, paths, and metadata each endpoint is allowed to receive.
+Analyze only data you are authorized to process.
 
-## Data sent to model providers
+## Data sent for model review
 
-When an LLM backend is enabled, Trident sends the prompts required for review.
-Depending on the workflow and available context, this can include finding
-titles, descriptions, source snippets, file paths and line numbers, scanner
-metadata, evidence excerpts, prior reviewer rationale, report-only/source-
-grounded indicators, triage inputs, and bounded agentic file excerpts. Red-Team
-receives its selected finding IDs and the evidence visible in its prompt.
-Provider-side processing, logging, human access, and retention are governed by
-that provider and gateway operator; Trident cannot verify those policies.
-Use local inference or an approved provider for sensitive repositories. A
-configured gateway URL and API key do not make the gateway private.
+Depending on the scan stage and backend, Trident may send:
 
-The OpenAI-compatible backend requires HTTPS for non-loopback endpoints and
-rejects credentials, query strings, and fragments in the base URL. Cleartext
-HTTP is allowed only for loopback testing. HTTP redirects are not followed, so
-the bearer key is not forwarded to a redirect destination. A user-configured
-trusted TLS proxy can still inspect traffic. Avoid logging full request bodies
-in production gateway infrastructure; Trident's acceptance harness uses only
-synthetic inputs and records auth presence, not the credential.
+- source-code excerpts and surrounding lines;
+- file paths, language, scanner names, rule identifiers, and package metadata;
+- vulnerability descriptions, severity, CWE or advisory identifiers, and
+  correlated evidence;
+- expert prompts, prior reviewer rationale, judge input, Red-Team context,
+  triage factors, and structured response requests.
 
-Scanner output, imported reports, repository files, and model responses are
-untrusted data. Prompt instructions ask models to treat supplied material as
-evidence rather than instructions, but prompt injection cannot be eliminated
-by text prompting. Agentic tools are bounded and read-only; do not enable them
-for untrusted sources unless the environment is appropriately isolated.
+The exact fields vary by stage and by the evidence available. A report-only
+import can still send imported descriptions and metadata. Supplying source
+context can add excerpts. Trident cannot control a provider's retention,
+training, support access, regional processing, or gateway logging. Review the
+provider's terms and the gateway operator's data-handling policy before use.
 
-For Git scans, do not embed credentials in the repository URL. Trident rejects
-HTTP(S)/git URL user information, password-bearing SSH URLs, query strings, and
-fragments; the conventional `git@host:path` SSH identity remains supported.
-Errors do not include the full URL or raw Git stderr. Uploaded ZIP extraction rejects
-traversal paths and links and is bounded to 100,000 members and 4 GiB of
-expanded file content.
+## Gateway transport
 
-## Data stored locally
+OpenAI-compatible gateways can be configured over HTTP or HTTPS. HTTPS is
+recommended for production and sensitive traffic. HTTP has no encryption; an
+observer may read or modify credentials, code excerpts, vulnerability evidence,
+prompts, responses, and repository metadata. A private network address does not
+provide encryption. Trident accepts explicit HTTP configuration, including
+private and public hosts; the operator chooses the endpoint and accepts the
+transport risk.
 
-The default Trident app-data directory and config directory are restricted to
-the current user (POSIX 0700 directories and 0600 files; Windows ACLs grant the
-current user, SYSTEM, and local Administrators). Config updates use an atomic
-write. SQLite databases and their WAL/SHM sidecars are similarly restricted.
-Custom SQLite paths have their database files restricted, but the operator
-chooses the parent directory. PostgreSQL deployments use the operator's
-server-side controls and require an explicit `POSTGRES_PASSWORD`; Trident does
-not ship a shared default password.
+Trident verifies HTTPS certificates and hostnames and does not follow redirects.
+HTTPS protects traffic only between Trident and its configured endpoint. Review
+the gateway's upstream connection, request logs, storage, retention, and
+administrator access separately. See
+[Connecting Trident to a Custom LLM Endpoint or Proxy](CONNECTING_LLM_ENDPOINTS.md).
 
-Credentials stored through `trident config set` remain plaintext TOML on disk.
-Permissions reduce exposure to other local accounts but do not encrypt the
-value or protect it from the current user, administrator/root, malware running
-as that user, backup software, or a compromised machine. Prefer
-`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` environment injection or a secret manager
-when the environment can provide them safely. Avoid putting secrets in shell
-arguments, terminal transcripts, or source workspaces.
+Ollama uses its native API and separate host/mode settings. A localhost Ollama
+gateway can still forward a cloud-tagged model request remotely. Check the
+selected model and Ollama mode rather than assuming that localhost means local
+inference.
 
-Finding evidence, imported records, debate/rationale text, attack-chain results,
-reports, and structured LLM request metadata are stored in the local database.
-The typed-decision ledger stores hashes of requests rather than prompts, but it
-does retain raw model responses, parsed decisions, validation errors, and
-transport metadata. A response may quote source context. There is no automatic
-retention or deletion policy for job records or the ledger. Workspace source
-copies are swept after `WORKSPACE_RETENTION_DAYS` (default 14 days); setting it
-to `0` disables that sweep. Deleting a source workspace does not delete report
-records or the separate LLM ledger. To remove local records, stop Trident and
-remove the relevant database, ledger, reports, caches, and workspace files
-according to local policy.
+## Credentials
 
-Scanner stdout and stderr are held in process memory for parsing and are not
-persisted as job events. Credential-specific Gitleaks, TruffleHog, Trivy,
-Semgrep, Bandit, gosec, and Checkov findings omit matched values from their
-normalized descriptions/snippets and raw finding metadata. Other normalized
-scanner evidence may still contain source-derived strings; treat reports as
-sensitive.
+API keys can be entered at a hidden prompt, piped through `--stdin`, or supplied
+through environment variables or a secret manager. Secret values passed as
+positional command-line arguments are rejected. Configuration output masks
+secret values. Trident restricts its config directory and file to the local
+account and uses atomic writes, but the TOML file stores credentials in
+plaintext. Local administrators or root can read the file. Prefer environment
+or secret-manager injection where your environment supports it, and rotate keys
+according to your provider's policy.
 
-Gateway logs, reverse-proxy logs, shell history, crash dumps, backup snapshots,
-and operating-system telemetry are outside Trident's control. Do not enable
-full request/response logging on production gateways unless the logged prompts
-and responses have an approved retention policy.
+Do not include keys in issue reports, shell history, CI logs, screenshots, or
+diagnostic bundles. Review proxy logs because HTTP forward proxies and API
+gateways have different visibility into request traffic.
 
-## Reports and diagnostics
+## Local records and retention
 
-JSON and SARIF intentionally contain finding evidence, paths, rationales,
-remediation, and disposition data; they are sensitive scan outputs. Do not
-attach them to public issues. Config commands mask API keys, and secret values
-are rejected as positional arguments. Errors from the OpenAI-compatible
-transport omit response bodies and bearer headers. Config path output can
-identify a local username; review command output before sharing it.
+The SQLite database, model ledger, workspaces, scanner logs, and exported
+reports can retain:
 
-Use the security guidance in [SECURITY.md](../SECURITY.md) and review the
-provider's current privacy and retention terms before sending code.
+- source metadata and bounded code context;
+- normalized and original imported findings;
+- scanner output and tool diagnostics;
+- prompts, model responses, review rationales, and errors;
+- attack-chain and triage analysis.
+
+The default workspace cleanup policy is 14 days. This does not automatically
+delete the scan database, model ledger, exported reports, config file, or
+backups. Use the configured data paths and your operating-system retention
+controls to inspect and remove records when policy permits. Treat reports and
+diagnostic output as sensitive security data.
+
+## Scanner and model boundaries
+
+Scanners may upload or query dependency data according to their own design and
+configuration. Their network behavior is separate from LLM processing. Review
+the tool's documentation and organizational policy. LLM output can be wrong,
+incomplete, or manipulated by untrusted source text. Trident validates response
+formats and preserves evidence, but it does not prove that a finding is
+exploitable or that a scan found every vulnerability.
+
+## Operational checklist
+
+1. Confirm authorization and the data classification of the target.
+2. Choose a local model or provider/gateway approved for that data.
+3. Use HTTPS for non-local sensitive traffic and review upstream handling.
+4. Supply credentials through the hidden prompt, protected stdin, environment,
+   or a secret manager.
+5. Restrict access to databases, workspaces, logs, and exported reports.
+6. Review unresolved and untriaged findings; do not treat a clean exit as proof
+   of security.

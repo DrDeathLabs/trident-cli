@@ -1,330 +1,121 @@
 # Trident CLI
 
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-Trident is a local AI-assisted vulnerability analysis and triage engine for the
-command line. It combines twelve established scanners with a Council of Experts
-(COE): five domain specialists review candidates independently, a judge
-challenges high-severity and contested findings, and a red-team reviewer looks
-for attack chains across the confirmed findings.
+Trident runs security scanners, imports scanner reports, correlates findings,
+asks configured language models to review evidence, and assigns confirmed
+findings remediation priorities from P0 through P4. It is a local command-line
+application. A scan stores working data and reports on the computer running
+Trident; configured remote model services receive the evidence needed for their
+review.
 
-The COE is the validity and adjudication layer. It determines which candidate
-evidence is supported by the available evidence, which is duplicated or
-refuted, and which needs more evidence. Trident preserves those verdicts and
-the reasoning behind them.
-It then applies deterministic triage to the findings that survive review,
-using impact, attack vector, exploitability, fix effort, reachability, and
-attack-chain context to produce a worked P0-P4 remediation queue.
+Use Trident on source code and reports you own or are authorized to analyze.
+Model and scanner results require review by a security practitioner.
 
-Scanners are good at producing candidates. The harder problem is what comes
-next: overlapping alerts, inconsistent severities, weak reachability context,
-and false positives competing with real vulnerabilities for engineering time.
-Trident is built to resolve that part of the work.
+## What it does
 
-Trident combines native scanner workflows with standardized and heterogeneous
-vulnerability-evidence ingestion through the same review and triage pipeline.
+- Runs twelve scanner integrations across source code, dependencies, IaC, and
+  secrets.
+- Imports SonarQube, Dependency-Check, SARIF, CycloneDX, and mapped JSON reports.
+- Normalizes scanner evidence and provenance, then correlates overlapping
+  findings.
+- Routes candidates to security experts using legacy rules and deterministic
+  structured evidence. Structured routing preserves every legacy expert match
+  and can add reviewers; a finding can receive review from several experts.
+- Uses judge review for disagreements and selected high-severity decisions.
+- Checks confirmed findings for multi-finding attack chains.
+- Assigns P0-P4 priorities and records rationale, evidence, and remediation.
+- Writes terminal, JSON, and SARIF reports.
 
-The COE answers one question: is this candidate supported by the available
-evidence? For source-grounded findings that evidence may include source code;
-for report-only imports it may consist of the imported report and preserved
-provenance. Triage answers the next one: how urgently should this confirmed
-issue be worked here?
-The triage pass assesses impact, attack vector, exploitability, fix effort, and
-reachability. Deterministic logic applies the rubric and evidence-based
-adjustments, incorporates attack-chain context, assigns P0-P4, and records the
-rationale, remediation guidance, and any change from the original assessment.
+See [limitations](docs/LIMITATIONS.md) for unsupported conclusions and known
+coverage boundaries.
 
-> Authorized use only. Scan code you own or have explicit permission to analyze.
+## Requirements
 
-## How Trident reviews and triages a scan
+- Python 3.11 or newer.
+- Access to the selected LLM backend and models.
+- Scanner runtimes required by the tools you enable. `trident install-tools`
+  installs managed tools where supported. npm-audit requires Node.js/npm;
+  Go-based scanners can use an installed Go runtime or Trident's managed
+  bootstrap.
 
-Trident keeps scanner output, COE review, attack-chain analysis, and triage
-separate so each decision can be inspected.
+## Install
 
-1. **Find candidates.** Twelve scanner adapters establish broad coverage.
-2. **Correlate candidates.** Overlapping alerts are grouped so the COE reviews
-   the issue once instead of debating the same problem repeatedly.
-3. **Run the COE.** Deterministic legacy and structured evidence routes
-   candidates to domain experts. Structured evidence can add appropriate
-   reviewers, while the preserved legacy matcher prevents a security review
-   from being removed by a new score threshold. A finding can go to multiple
-   experts when evidence spans domains. Scores and reasons are inspectable.
-   Contested findings go through cross-examination. The judge rechecks
-   high-severity results and disagreements.
-4. **Look for attack chains.** The red-team reviewer examines the confirmed
-   findings together. Exact duplicate model-visible input reuses its prior
-   attack-chain analysis; changed evidence triggers a fresh analysis. If separate
-   weaknesses form a credible attack path, the chain is recorded and its findings
-   can be raised one priority tier.
-5. **Triage confirmed findings.** The triage pass assesses impact, attack vector,
-   exploitability, fix effort, and reachability. Deterministic logic applies the
-   rubric and evidence-based adjustments, then assigns P0-P4.
-6. **Export the result.** Reports contain the confirmed findings, priority,
-   rationale, attack-chain context, and the evidence behind each decision.
-
-The result is a worked remediation queue, not just a list of alerts. Expert
-routing is deterministic and combines the preserved legacy matcher with
-structured evidence using logical OR. Structured scores and reasons can add
-experts, while multi-domain findings can reach multiple reviewers. This
-compatibility rule can retain broad legacy keyword matches, so no expert-call
-savings are claimed; the corrected acceptance comparison added three expert
-invocations (44 to 47) while preserving confirmed findings and priorities.
-
-Each confirmed finding carries its priority, rationale, factors, reachability
-context, and recommended action. Findings that are rejected remain available as
-review evidence, so the queue can be acted on without losing the decision trail.
-SARIF works with code-scanning workflows, JSON supports automation, table output
-is useful at the terminal, and the triage sidecar preserves the complete record.
-
-The current [validation summary](docs/VALIDATION.md) describes the controlled
-fixtures and local acceptance scope. Those results do not establish universal
-detection efficacy or validate an external model provider.
-
-Trident is not an autonomous security approval system. Model output is input to
-the review process, and high-impact results still require qualified human review.
-
-## The scan workflow
-
-1. Ingest a local directory, Git checkout, or ZIP archive.
-2. Run the configured deterministic scanners.
-3. Correlate and deduplicate overlapping candidates.
-4. Ask domain experts, the judge, and red-team review to adjudicate
-   candidates and discover issues supported by the available evidence.
-5. Apply class, reachability, and optional corpus-profile triage adjustments.
-6. Run automatic triage on confirmed findings.
-7. Write the primary report and, when requested, the complete worked-triage
-   sidecar.
-
-## Import existing scanner reports
-
-Trident can use native scanner evidence, standardized security formats, and
-heterogeneous vulnerability JSON instead of launching scanner subprocesses:
+Download the current wheel from the [GitHub Releases page](https://github.com/DrDeathLabs/trident-cli/releases),
+then install it in a virtual environment. Detailed platform steps are in the
+[installation guide](docs/INSTALLATION.md).
 
 ```bash
-trident scan --input-file sonar-report.json --format json
-trident scan --input-file dependency-check.json --format table
-trident scan --input-file sonar-report.json \
-  --input-file dependency-check.json \
-  --format sarif --triage-output-file triage.sarif
-trident inspect vendor-report.json --format json
-trident scan --input-file vendor-report.json --mapping vendor-map.json
+python -m venv .venv
+python -m pip install ./trident-*-py3-none-any.whl
+trident --version
+trident install-tools --verify --warmup
 ```
 
-First-class deterministic adapters cover SonarQube, OWASP Dependency-Check,
-SARIF 2.1.0, and CycloneDX vulnerability JSON. Unknown security report
-structures can use safe, versioned mappings and bounded schema inference;
-Trident does not claim that every arbitrary JSON document is a vulnerability
-report. Imported records follow the same normalization, correlation, Council, judge,
-red-team, disposition, triage, and reporting path as native scanner findings.
-The original report record, input hash, review rationale, disposition, and
-triage factors remain available in the JSON, SARIF, and triage sidecar output.
-Without `--source-dir`, imported findings use `report_only` evidence and
-reachability is `unknown`. With `--source-dir`, Trident may add code context
-without running scanners. Novel discovery remains opt-in with
-`--discover-novel`.
+## First scan
 
-In the actionable list, `confirmed` means retained for remediation work. It
-does not mean that report-only metadata proves source-level exploitability.
-Rejected candidates, exact duplicates, and related advisories remain available
-as disposition evidence rather than being silently discarded.
-
-## Capabilities
-
-- SAST: Semgrep, Bandit, and gosec.
-- Infrastructure/configuration/IaC: Checkov.
-- Software composition analysis: Grype, OSV-Scanner, Trivy, pip-audit,
-  npm-audit, and govulncheck.
-- Secrets detection: Gitleaks and TruffleHog.
-- Council of Experts review, independent domain specialists, judge review,
-  cross-examination, red-team attack-chain analysis, reachability analysis, and
-  automatic evidence-preserving P0-P4 triage.
-- Local SQLite state with no network service required by the CLI itself.
-- Configurable Ollama, OpenAI-compatible, or Anthropic review backends.
-
-## OpenAI-compatible gateways
-
-Use any gateway that implements the OpenAI-compatible `/v1/models`,
-`/v1/chat/completions`, and `/v1/embeddings` endpoints. Set a custom base URL
-and model alias through config or environment; Trident sends the alias exactly
-as configured.
+Configure Ollama, OpenAI-compatible, or Anthropic access. For an OpenAI-style
+gateway, set the backend, base URL, and gateway model alias:
 
 ```bash
 trident config set llm.backend openai
-trident config set llm.openai_base_url http://127.0.0.1:8000/v1
+trident config set llm.openai_base_url https://llm-gateway.example.com/v1
 trident config set llm.expert_model security-expert
 trident config set llm.openai_api_key
 trident scan . --backend openai --model security-expert
 ```
 
-API keys are entered through a hidden prompt, read from `--stdin`, or supplied
-through `OPENAI_API_KEY`. `config get` and `config show` mask secrets, and
-secret values passed as command-line arguments are rejected.
+The hostname is reserved for documentation. Replace it with the endpoint
+provided by your gateway operator. The API key command uses a hidden prompt.
+For no-auth gateways, leave the key unset. See
+[Connecting Trident to a Custom LLM Endpoint or Proxy](docs/CONNECTING_LLM_ENDPOINTS.md)
+for HTTP and HTTPS examples, authentication, network requirements, and
+troubleshooting.
 
-`OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`; a trailing slash is
-optional. LLM settings resolve in this order: CLI flags, environment variables,
-persisted config, then defaults. `--model` applies to the scan's expert, judge,
-Red-Team, and triage calls.
-
-## Install and run
-
-Python 3.11 or newer is required. A clean virtual environment is recommended.
+The default terminal report displays numerical counts for P0, P1, P2, P3, P4,
+the prioritized total, untriaged findings, and unresolved findings. JSON and
+SARIF contain per-finding evidence and triage details:
 
 ```bash
-python -m venv .venv
-
-# macOS/Linux/WSL
-source .venv/bin/activate
-
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
-
-# Install the v0.3.4 wheel downloaded from its GitHub release:
-python -m pip install path/to/trident-0.3.4-py3-none-any.whl
-trident --version
-trident install-tools --verify --warmup
-```
-
-For a source checkout, install the package from `backend/`:
-
-```bash
-cd backend
-python -m pip install .
-```
-
-Configure a review backend, then scan an authorized source tree:
-
-```bash
-trident config set llm.backend ollama
-trident config set llm.base_url http://localhost:11434
-trident config set llm.expert_model nemotron-3-super:cloud
-trident scan /path/to/source
-```
-
-The first tool setup downloads managed scanner binaries and installs the
-Python-managed scanners into the active Python environment. Node.js/npm is
-required for npm-audit; Trident does not install Node.js. Go-based tools use an
-existing Go installation or a user-data bootstrap runtime.
-
-The optional corpus-profile triage adjustment is built separately:
-
-```bash
-trident model refresh
-trident model status
-```
-
-## Reports and CI
-
-```bash
-trident scan . --format table
 trident scan . --format json --output-file results.json
 trident scan . --format sarif --output-file results.sarif
-trident scan . --format json --output-file results.json \
-  --triage-output-file triage.json
 ```
 
-The default terminal table is a numerical summary: it prints every P0-P4 tier,
-including zero counts, the total of prioritized findings, and separate counts
-for confirmed-but-untriaged and unresolved findings. These counts come from the
-same finalized finding population used by the JSON report. Detailed evidence,
-review explanations, and remediation remain in JSON and SARIF.
+Exit code `0` means review completed below the configured gate, `1` means a
+prioritized finding meets the gate, and `2` means the scan failed or review is
+incomplete because findings remain untriaged or unresolved.
 
-The primary JSON and SARIF reports include compact triage metadata. The
-`--triage-output-file` option writes the full worked queue with P0-P4 groups,
-playbooks, SLAs, factors, rationale, attack-chain context, and analyst
-overrides when present.
+## Configuration and reports
 
-Exit codes are stable for automation:
+CLI options override environment variables, which override persisted config,
+which overrides defaults. API keys can be entered at a hidden prompt, read from
+stdin, or supplied through a protected environment or secret store. Trident
+masks secret values in configuration output and restricts local config-file
+permissions. The config file is plaintext, not encrypted.
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Review completed; no prioritized confirmed finding is at or above the gate. |
-| `1` | At least one prioritized confirmed finding is at or above the gate. |
-| `2` | Scan/ingestion/report error, or confirmed findings remain untriaged or unresolved. |
+- [Quick start](docs/QUICK_START.md)
+- [Configuration reference](docs/CONFIGURATION.md)
+- [LLM backends](docs/LLM_BACKENDS.md)
+- [Scanning and report ingestion](docs/SCANNING.md)
+- [Council and expert review](docs/AI_COUNCIL.md)
+- [P0-P4 triage](docs/TRIAGE.md)
+- [Terminal, JSON, and SARIF output](docs/OUTPUT_FORMATS.md)
+- [Privacy and data handling](docs/PRIVACY.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [All documentation](docs/README.md)
 
-Exit 2 takes precedence over the priority gate because unresolved or
-untriaged findings mean the review is incomplete. Final unresolved
-disagreements are reported as `unresolved` by the fail-closed convergence
-workflow; suppressed and false-positive records are not included in the P0-P4
-counts.
+## Boundaries
 
-The repository includes a [SARIF workflow example](trident-scan.yml), a
-[CLI CI workflow](.github/workflows/ci.yml), and a manually invoked package
-[release workflow](.github/workflows/release.yml). The release workflow does
-not publish on ordinary pushes, pull requests, or tag creation.
-
-## Documentation
-
-| Audience | Start with | Then read |
-| --- | --- | --- |
-| New user | [Installation](docs/INSTALLATION.md) | [Quick start](docs/QUICK_START.md) |
-| Scan operator | [Scanning](docs/SCANNING.md) | [Tools](docs/TOOLS.md) |
-| Triage reviewer | [Triage](docs/TRIAGE.md) | [Output formats](docs/OUTPUT_FORMATS.md) |
-| CI maintainer | [CI and SARIF](docs/CI_CD.md) | [Public release readiness](docs/OPEN_SOURCE_READINESS.md) |
-| Developer | [Development](docs/DEVELOPMENT.md) | [Architecture](docs/ARCHITECTURE.md) |
-| Security reviewer | [Limitations](docs/LIMITATIONS.md) | [Security policy](SECURITY.md) |
-| Privacy reviewer | [Privacy and data handling](docs/PRIVACY.md) | [Security policy](SECURITY.md) |
-
-See [the full documentation map](docs/README.md), [support guidance](SUPPORT.md),
-and [third-party notices](THIRD-PARTY-NOTICES.md).
-
-## Project layout
-
-```text
-backend/
-├── pyproject.toml
-├── trident/
-│   ├── cli.py
-│   ├── config.py
-│   ├── orchestrator.py
-│   ├── calibration/
-│   ├── experts/
-│   ├── ingest/
-│   ├── reporters/
-│   └── tools/
-└── tests/
-docs/
-scripts/
-eval/                 # scorecards and evaluation metadata
-trident-scan.yml      # CI SARIF example
-```
-
-## Limitations and security
-
-Trident performs static source and configuration analysis. It is not a
-penetration test, runtime monitor, compliance certification, or replacement for
-manual review. Coverage depends on the installed scanners, detected manifests,
-supported languages and frameworks, and the quality of the configured review
-backend. Dynamic dispatch, cross-process behavior, runtime-only weaknesses, and
-unsupported source constructs may be missed.
-
-LLM output is untrusted input. Trident validates structured responses and keeps
-the deterministic scanner evidence, council verdict, guard adjustments, and
-triage rationale available for review. Review P0/P1 findings manually and do
-not treat a clean scan as proof of security.
-
-The CLI stores local databases, extracted workspaces, model data, tool binaries,
-and credentials under operating-system user-data locations. Protect those paths
-with operating-system permissions. A configured cloud review backend may receive
-source context; choose a backend and scope appropriate to the sensitivity of
-the target. Never scan unauthorized code.
-
-See [Limitations](docs/LIMITATIONS.md), [Security](SECURITY.md), and
-[Support](SUPPORT.md) for operational boundaries.
+Trident performs static analysis and evidence review. It does not execute the
+application, prove exploitability, certify compliance, or establish that a
+clean scan is secure. Results depend on installed scanners, supported
+ecosystems, source context, configured models, and the evidence supplied.
+Review important findings and remediation decisions before deployment.
 
 ## License
 
-Trident is licensed under the [Business Source License 1.1](LICENSE). The
-Additional Use Grant permits internal, organizational, educational, research,
-nonprofit, government, public-sector, community, evaluation, development,
-testing, and personal use as described in the license.
-
-The license does not permit hosted or managed services, SaaS, resale,
-commercialization as a standalone product, inclusion as a material feature of
-another commercial security or GRC product, or paid third-party assessment or
-managed security services without separate commercial permission. Each specific
-version changes to the MIT License four years after its first public
-distribution. See [COMMERCIAL.md](COMMERCIAL.md) for the licensing boundary.
-
-The external scanners retain their own licenses; see
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Trident is distributed under the [Business Source License 1.1](LICENSE).
+The license describes permitted use and the change license for each version.
+See [COMMERCIAL.md](COMMERCIAL.md) for the commercial-use boundary and
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for scanner notices.

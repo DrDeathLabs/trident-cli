@@ -80,6 +80,31 @@ def _is_reparse_point(metadata: os.stat_result) -> bool:
     return bool(attributes & reparse_attribute)
 
 
+def _contains_reparse_point(path: Path) -> bool:
+    """Check every existing component without resolving configured symlinks.
+
+    Checking only ``path.lstat()`` misses a junction or symlink higher in the
+    path. A config path such as ``LocalAppData/Trident/Trident`` can have a
+    normal final directory while ``LocalAppData/Trident`` redirects writes to
+    another location. Walk the normalized absolute path component by component
+    and inspect each component with ``lstat`` before any sensitive read/write.
+    """
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    components = [current]
+    for part in absolute.parts[1:]:
+        current = current / part
+        components.append(current)
+    for component in components:
+        try:
+            metadata = component.lstat()
+        except FileNotFoundError:
+            continue
+        if component.is_symlink() or _is_reparse_point(metadata):
+            return True
+    return False
+
+
 @lru_cache(maxsize=512)
 def _restrict_windows_acl_cached(
     path: Path, directory: bool, device: int, inode: int, modified_ns: int,
@@ -91,16 +116,12 @@ def _restrict_windows_acl_cached(
 
 def secure_directory(path: Path, *, force: bool = False) -> None:
     """Create and restrict a Trident-owned directory to its current user."""
-    try:
-        metadata = path.lstat()
-    except FileNotFoundError:
-        metadata = None
-    if metadata is not None and (path.is_symlink() or _is_reparse_point(metadata)):
+    if _contains_reparse_point(path):
         raise OSError("Trident sensitive-data directory must not be a symbolic link or reparse point")
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    metadata = path.lstat()
-    if path.is_symlink() or _is_reparse_point(metadata):
+    if _contains_reparse_point(path):
         raise OSError("Trident sensitive-data directory must not be a symbolic link or reparse point")
+    metadata = path.lstat()
     if not path.is_dir():
         raise OSError("Trident data directory is not a directory")
     if os.name == "nt":
@@ -118,6 +139,8 @@ def secure_directory(path: Path, *, force: bool = False) -> None:
 
 def secure_file(path: Path, *, force: bool = False) -> None:
     """Restrict an existing regular file to its current user."""
+    if _contains_reparse_point(path.parent):
+        raise OSError("Trident sensitive-data path must not contain a symbolic link or reparse point")
     try:
         metadata = path.lstat()
     except FileNotFoundError:

@@ -1,81 +1,31 @@
-# Feature status
+# Capability status
 
-This table describes the current standalone CLI capabilities.
+This page states what the current CLI implements and where evidence or limits
+are documented. “Supported” means the workflow exists; it does not mean every
+language, scanner version, model provider, or target is covered.
 
-## Security tools
+| Capability | Current behavior | Main limits |
+| --- | --- | --- |
+| Source scan | Runs installed and applicable scanner adapters on a local directory, Git source, or ZIP. | Scanner coverage depends on installed tools, platform, detected manifests, language support, and databases. |
+| Report import | Normalizes SonarQube, Dependency-Check, SARIF, CycloneDX, and mapped JSON evidence. | Generic JSON needs a mapping or bounded schema inference. Imported report data is not source-grounded unless source context is supplied. |
+| Correlation | Groups duplicate and related evidence while retaining provenance. | Similarity and source identifiers can be incomplete or ambiguous. |
+| Expert routing | Combines preserved legacy matching with deterministic structured evidence; multiple expert reviews are supported. | Rules cannot represent every vulnerability nuance. There is no accepted call-savings claim. |
+| Council and judge | Experts assess evidence; the judge reviews selected high-severity and contested decisions. | Model outputs can be wrong or incomplete. Unresolved outcomes remain visible and fail closed. |
+| Red-Team | Analyzes confirmed findings for multi-finding attack chains. Exact duplicate input can reuse successful analysis. | Chains are hypotheses over available evidence, not proof of exploitability. Changed input needs a fresh model call and budget. |
+| Triage | Applies recorded evidence and deterministic adjustments to assign P0-P4. | Priority is a work-order aid, not a universal severity or SLA guarantee. |
+| Reports | Terminal P0-P4 totals, JSON evidence, SARIF 2.1.0, and a detailed triage sidecar. | JSON and SARIF expose different schemas; JSON retains the fuller Trident record. |
+| Model backends | Ollama native API, OpenAI-compatible API, and Anthropic. | API features differ. A gateway may not implement every operation or response option. |
+| Custom endpoints | HTTP and HTTPS OpenAI-compatible endpoints, custom base paths, auth keys, and model aliases. | HTTP is unencrypted. Use verified HTTPS for production and sensitive traffic. No external-provider claim follows from localhost tests. |
+| Runtime security testing | Not provided. | Trident does not execute applications or perform a penetration test. |
+| Compliance certification | Not provided. | A Trident report does not establish compliance. |
 
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| Semgrep | Supported | Multi-language SAST |
-| Bandit | Supported | Python SAST |
-| Gosec | Supported | Requires Go or bootstrap |
-| Checkov | Supported | IaC and configuration |
-| Grype | Supported | SCA |
-| OSV-Scanner | Supported | SCA |
-| Trivy | Supported | SCA and IaC |
-| pip-audit | Supported | Python SCA |
-| npm-audit | Supported | Requires system Node.js/npm |
-| govulncheck | Supported | Requires Go or bootstrap |
-| Gitleaks | Supported | Secrets |
-| TruffleHog | Supported | Verified secrets; AGPL-3.0 |
+## Verified behavior and evidence scope
 
-## Analysis
+The repository's automated tests exercise routing, review state, gateway
+requests, triage, report generation, and security controls. Release acceptance
+records identify whether a result came from unit tests, a local HTTP/HTTPS
+gateway, or an installed-wheel command. A localhost gateway test demonstrates
+the API contract; it does not validate a commercial or organizational provider.
 
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| Five domain experts | Supported | The original tool/CWE/keyword matcher is preserved as a compatibility floor; structured evidence may add experts, multi-domain review remains supported, and decisions expose scores/reasons |
-| Judge and cross-examination | Supported | Applied according to finding severity and disagreement |
-| Novel discovery | Supported | Iterative expert review |
-| Agentic exploration | Supported, optional | Off by default to limit token use and scan time. Enable with `scan.agentic` or `AGENTIC=true`. |
-| Attack-chain analysis | Supported | Stable bounded finding selection; exact successful model-input duplicates reuse persisted chains; changed evidence invalidates old chains before budget checks and reports `unavailable_budget` when no call is available |
-| Class correction | Supported | Deterministic category-specific factor caps |
-| Corpus-profile adjustment | Supported | Requires downloaded CWE profiles from model refresh |
-| Reachability adjustment | Supported | Static analysis; caps confirmed unreachable paths and fails open when unknown |
-
-## Output
-
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| Table | Supported | Human-readable terminal output |
-| JSON | Supported | Confirmed findings and triage metadata |
-| SARIF 2.1.0 | Supported | Compatible with code-scanning upload actions |
-| Output file | Supported | Use --output-file or -f; use --triage-output-file for the detailed worked queue |
-| Automatic triage sidecar | Supported | Full JSON, SARIF, or table queue with tier, rationale, and false-positive counts |
-| Quiet mode | Supported | Suitable for CI logs |
-
-## External JSON input
-
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| SonarQube JSON import | Supported | Use `--input-file`; native scanner subprocesses are bypassed |
-| OWASP Dependency-Check JSON import | Supported | Requires `reportSchema: 1.1` |
-| SARIF 2.1.0 import | Supported | Security results and rule/location provenance are preserved |
-| CycloneDX vulnerability JSON import | Supported | Vulnerability-bearing BOMs are imported; inventory-only BOMs are not findings |
-| Multiple supported JSON inputs | Supported | Repeat `--input-file` for one import job |
-| Heterogeneous vulnerability JSON mapping | Supported with bounds | Deterministic inference, optional validated schema-AI proposals, or explicit `trident-json-mapping-v1`; semantic ambiguity and non-security JSON fail closed |
-| Native/external JSON evidence | Supported with bounds | Trivy, Grype, and Semgrep-shaped reports use generic mapping; they are not first-class adapters |
-
-## LLM backends
-
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| Ollama | Supported | Default backend; gateway may be local while the selected model may be cloud-tagged |
-| OpenAI-compatible gateway | Supported | Custom `/v1` base URL, bearer key, arbitrary model aliases, and models/chat-completions/embeddings endpoints; config commands mask credentials and accept hidden prompt/stdin input |
-| Anthropic | Supported | Requires ANTHROPIC_API_KEY |
-
-## Scan inputs
-
-| Input | Status | Notes |
-|-------|--------|-------|
-| Local directory or file | Supported | Default input form |
-| Git URL | Supported | HTTPS and SSH |
-| ZIP archive | Supported | Safe extraction rejects traversal/links; bounded to 100,000 members and 4 GiB expanded size |
-| Container image | Unsupported | Provide source or configuration files instead |
-
-## CI integration
-
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| Exit codes 0, 1, and 2 | Supported | Complete below gate, prioritized finding at gate, scan failure or incomplete triage/review |
-| Severity gate | Supported | --severity-gate and --fail-on |
-| SARIF file generation | Supported | Upload with the host CI provider |
+For scan workflow details, see [Scanning](SCANNING.md), [Validation](VALIDATION.md),
+and [Limitations](LIMITATIONS.md).

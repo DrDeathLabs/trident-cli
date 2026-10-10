@@ -136,6 +136,68 @@ def test_scan_help_describes_numeric_summary():
     result = CliRunner().invoke(cli, ["scan", "--help"])
     assert result.exit_code == 0
     assert "P0-P4 counts" in result.output
+    assert "--openai-base-url" in result.output
+    assert "Requires --backend openai" in result.output
+
+
+def test_gateway_help_topic_documents_transport_and_setup():
+    result = CliRunner().invoke(cli, ["help", "gateway"])
+    assert result.exit_code == 0
+    assert "OpenAI-compatible endpoints" in result.output
+    assert "HTTP has no transport encryption" in result.output
+    assert "trident config set llm.openai_api_key" in result.output
+    assert "trident scan . --backend openai --model security-expert" in result.output
+
+
+def test_openai_base_url_cli_override_is_applied_only_during_scan_and_restored(
+    tmpdir_path, mem_db, monkeypatch,
+):
+    from trident.config import settings
+
+    old_backend = settings.llm.backend
+    old_url = settings.llm.openai_base_url
+    observed = []
+
+    async def _stub(*_args, **_kwargs):
+        observed.append((settings.llm.backend, settings.llm.openai_base_url))
+        return True
+
+    monkeypatch.setattr("trident.cli._run_scan", _stub)
+    monkeypatch.setattr(settings.llm, "backend", "ollama")
+    monkeypatch.setattr(settings.llm, "openai_base_url", "https://persisted.example/v1")
+    result = CliRunner().invoke(cli, [
+        "scan", tmpdir_path, "--backend", "openai", "--openai-base-url",
+        "http://192.0.2.10:8000/custom/v1", "--quiet",
+    ])
+    assert result.exit_code == 0, result.output
+    assert observed == [("openai", "http://192.0.2.10:8000/custom/v1")]
+    assert settings.llm.openai_base_url == "https://persisted.example/v1"
+    assert settings.llm.backend == "ollama"
+    assert old_backend
+    assert old_url
+
+
+@pytest.mark.parametrize(
+    ("cli_args", "message"),
+    [
+        (("--backend", "ollama", "--openai-base-url", "http://gateway.example/v1"),
+         "requires the openai backend"),
+        (("--backend", "openai", "--openai-base-url", "file:///tmp/v1"),
+         "valid HTTP(S) base URL"),
+    ],
+)
+def test_invalid_openai_base_url_cli_override_does_not_mutate_settings(
+    tmpdir_path, mem_db, monkeypatch, cli_args, message,
+):
+    from trident.config import settings
+
+    monkeypatch.setattr(settings.llm, "backend", "ollama")
+    monkeypatch.setattr(settings.llm, "openai_base_url", "https://persisted.example/v1")
+    result = CliRunner().invoke(cli, ["scan", tmpdir_path, *cli_args])
+    assert result.exit_code == 2
+    assert message in result.output
+    assert settings.llm.backend == "ollama"
+    assert settings.llm.openai_base_url == "https://persisted.example/v1"
 
 
 def test_scan_rejects_embedded_git_credentials_before_persisting_or_echoing_them(mem_db):
