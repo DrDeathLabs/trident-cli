@@ -60,7 +60,12 @@ jobs:
         run: python -m build --wheel --sdist
 
       - name: Verify distributions
-        run: python -m twine check dist/*
+        run: python -m twine check dist/*.whl dist/*.tar.gz
+
+      - name: Create and verify distribution checksums
+        run: |
+          sha256sum dist/*.whl dist/*.tar.gz | sed 's#  dist/#  #' > dist/SHA256SUMS.txt
+          (cd dist && sha256sum --check SHA256SUMS.txt)
 
       - name: Install wheel in a clean virtual environment
         run: |
