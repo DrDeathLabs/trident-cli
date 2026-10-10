@@ -7,13 +7,13 @@ general structure of [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 _No unreleased changes._
 
-## [0.3.4] - 2026-10-09
+## [0.3.4] - 2026-10-10
 
 ### Added
 
 - Generic OpenAI-compatible `/v1` gateway support through persisted settings,
   environment variables, and scan CLI overrides. Configured model aliases are
-  sent unchanged.
+  sent unchanged; explicitly configured HTTP and HTTPS endpoints are supported.
 - Deterministic expert-routing decisions that preserve the original tool, CWE,
   and keyword matcher as a compatibility floor, while structured evidence can
   add domain reviewers. Decisions expose their scores and reasons and preserve
@@ -26,6 +26,9 @@ _No unreleased changes._
 
 - Runtime LLM settings now honor CLI, environment, persisted config, then
   defaults, including the OpenAI-compatible endpoint, API key, and role models.
+- `trident scan --openai-base-url URL` overrides the OpenAI-compatible base URL
+  for one scan. HTTPS certificate validation stays enabled, redirects are not
+  followed, and requests use the configured hostname through normal networking.
 - Expert routing uses `legacy_match OR structured_match`; structured routing
   cannot suppress a legacy reviewer, and reduced call counts are not required.
 - API keys set through `config set` use a hidden prompt or stdin, command-line
@@ -42,7 +45,11 @@ _No unreleased changes._
   permissions; the default Trident data directory is private. A PostgreSQL
   password is required instead of relying on a shipped development password.
 - OpenAI-compatible bearer keys are not sent to redirects. Remote gateways
-  require HTTPS; cleartext HTTP is limited to loopback addresses.
+  may use explicitly configured HTTP or HTTPS base URLs. HTTPS is recommended
+  for remote and sensitive traffic, certificate verification stays enabled,
+  and redirects are not followed. HTTP provides no transport encryption.
+- Config and scan-data paths reject symbolic-link and Windows reparse-point
+  ancestors, including directory junctions.
 - User ZIP and downloaded runtime archives reject traversal and links and are
   bounded by member-count and expanded-size limits. Git errors no longer emit
   raw remote output, and credential-bearing Git URL forms are rejected.

@@ -1,252 +1,90 @@
 # Troubleshooting
 
-Common issues and how to fix them.
-
----
-
-## Installation
-
-### Installing the `trident` package name gives an unexpected package
-
-The PyPI name `trident` is already occupied by another project and is not the
-installation path for this release. Install the wheel downloaded from the
-GitHub release, or install the source checkout:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate      # Windows
-source .venv/bin/activate   # macOS/Linux
-python -m pip install path/to/trident-0.3.4-py3-none-any.whl
-```
-
-From a source checkout:
-
-```bash
-cd backend
-python -m pip install .
-```
-
-### `trident: command not found` after install
-
-The `trident` script is installed into the venv's `Scripts\` (Windows) or `bin/` (macOS/Linux) directory. Make sure the venv is activated:
-
-```bash
-.venv\Scripts\activate      # Windows
-source .venv/bin/activate   # macOS/Linux
-trident --help
-```
-
----
-
-## Tool installation
-
-### Go bootstrap fails - `SSL certificate error` or `connection refused`
-
-`trident install-tools` downloads Go from `go.dev`. If your environment blocks direct downloads:
-
-1. Download the Go release manually from https://go.dev/dl/
-2. Extract it to `<tools_dir>/go_runtime/`
-3. Re-run `trident install-tools`; it will detect the existing Go binary
-
-### Tool not found after `trident install-tools`
-
-Run `trident install-tools --verify` to see each tool's status and path:
-
-```bash
-trident install-tools --verify
-```
-
-If a tool shows `missing`, run:
-
-```bash
-trident install-tools --tool <tool-name>
-```
-
-If that fails, check whether the download host is blocked by your firewall (`github.com` for binary releases, `pypi.org` for pip tools).
-
-### `npm-audit` always shows `missing`
-
-npm-audit requires Node.js. Trident does not install Node.js. Install it from https://nodejs.org or via your system package manager. After Node.js is on PATH, `npm-audit` will be detected automatically.
-
----
-
-## Scanning
-
-### Scan hangs and never completes
-
-Most likely cause: the LLM backend is not responding.
-
-1. Check your backend is running: for Ollama, `ollama list` should return models; for cloud backends, verify your API key is set.
-2. Check the backend host config:
-
-```bash
-trident config show
-```
-
-3. Try a minimal scan to isolate whether the issue is the LLM or the tools:
-
-```bash
-trident scan . --max-iterations 1 --quiet
-```
-
-4. If Ollama is configured, check it is not overloaded:
-
-```bash
-ollama ps
-```
-
-### `scan error` or incomplete review - exit code 2
-
-Exit code 2 indicates a scan/setup/report failure or incomplete review. Confirmed
-findings may remain untriaged, or a model decision may remain unresolved. Check
-the terminal `Untriaged`/`Unresolved` counts and JSON/SARIF dispositions. Exit 2
-takes precedence over the severity gate. For a setup failure, run with a single
-iteration and without `--quiet` to see the diagnostic:
-
-```bash
-trident scan . --max-iterations 1
-```
-
-Common causes:
-- The workspace path does not exist or is not readable
-- Git clone failed (bad URL, auth required, network issue)
-- A tool runner produced unexpected output format (update the tool: `trident install-tools --tool <name>`)
-
----
-
-## Output
-
-### JSON output contains a BOM (`﻿`) on Windows
-
-Some Windows terminals write a UTF-8 BOM at the start of piped output. This breaks `json.load()` in Python.
-
-Use `--output-file` to write directly to a file instead of stdout:
-
-```bash
-trident scan . --format json --output-file results.json
-```
-
-Then read with:
-
-```python
-with open("results.json", encoding="utf-8-sig") as f:
-    data = json.load(f)
-```
-
-### SARIF upload fails on GitHub Actions - `Invalid SARIF`
-
-Common causes:
-
-1. **Zero-length file**: the scan produced no output (scan error before output was written). Check exit code 2.
-2. **BOM prefix**: see above - use `--output-file` instead of stdout redirection.
-3. **Schema version mismatch**: Trident produces SARIF 2.1.0. Verify the upload action version:
-
-```yaml
-uses: github/codeql-action/upload-sarif@v3
-```
-
----
-
-## Corpus-profile triage adjustment
-
-### `corpus_guard` is always `null`
-
-The local corpus profiles have not been built. Run:
-
-```bash
-trident model refresh
-```
-
-This downloads the vulnerability feeds, computes CWE profiles, and builds the
-local statistical artifact. Expect 20-45 minutes.
-
-After completion, verify:
-
-```bash
-trident model status
-```
-
-`Status: active` confirms the local corpus calibration state is available and
-the corpus-profile triage adjustment can run for qualifying CWEs.
-
-### `trident model refresh` fails partway through
-
-The most common causes are network interruption (downloading large feeds) and disk space. The NVD feed alone is several hundred MB.
-
-Check available disk space, then re-run:
-
-```bash
-trident model refresh
-```
-
-The command is idempotent - feeds already downloaded are not re-downloaded.
-
----
-
-## LLM backends
-
-### Ollama - `connection refused` or `timeout`
-
-1. Confirm Ollama is running: `ollama list`
-2. Check the host config matches where Ollama is running:
-
-```bash
-trident config get llm.base_url
-# default: http://localhost:11434
-```
-
-3. If Ollama is on a different host:
-
-```bash
-trident config set llm.base_url http://127.0.0.1:11434
-```
-
-### OpenAI / Anthropic - `Authentication error`
-
-Your API key is missing or invalid.
-
-```bash
-# Verify that the key is configured (all secret values are masked)
+Start with the exact command and exit code. Avoid posting source code, raw
+prompts, API keys, private endpoint names, or unredacted reports in a support
+request. See [Privacy](PRIVACY.md) before collecting diagnostics.
+
+## OpenAI-compatible gateway errors
+
+| Error | Likely cause and next step |
+| --- | --- |
+| Connection refused | Check that the host, port, and service are listening. Test reachability from the same machine or container that runs Trident. |
+| DNS lookup failure | Check the hostname, VPN connection, and internal DNS from the Trident environment. |
+| Certificate verification failure | Confirm certificate expiry and hostname, then install the approved CA chain or set `SSL_CERT_FILE`/`SSL_CERT_DIR`. Keep verification enabled. |
+| HTTP 401 or 403 | Verify that the gateway expects a bearer key and that the key is valid. Enter it using `trident config set llm.openai_api_key` or inject it from a secret store. Secret output is masked. |
+| HTTP 404 | Confirm the base URL includes the right API prefix and path. Trident appends `/models`, `/chat/completions`, and `/embeddings`. |
+| Model rejected | Check the exact alias configured in `llm.expert_model`, `JUDGE_MODEL`, or `REDTEAM_MODEL`. Trident sends the alias unchanged. |
+| Invalid response or unsupported feature | Check that the service implements the endpoint and response format required by the failing role. A chat-compatible service may not support embeddings, tool calls, or structured output. |
+| Timeout | Check server load, model initialization, and network latency. Adjust `LLM_TIMEOUT` only if the service needs more time. |
+
+Inspect non-secret settings and sources:
+
+```text
+trident config get llm.backend
+trident config get llm.openai_base_url
+trident config get llm.expert_model
 trident config get llm.openai_api_key
 ```
 
-Set via environment variable (preferred in CI):
+Use `trident scan --backend openai --openai-base-url URL --model ALIAS` for a
+single-run override. The option requires the OpenAI backend. Read
+[the custom endpoint guide](CONNECTING_LLM_ENDPOINTS.md) for HTTP, HTTPS,
+enterprise CA, authentication, and proxy details.
 
-```bash
-read -rsp 'OpenAI API key: ' OPENAI_API_KEY; echo; export OPENAI_API_KEY
-read -rsp 'Anthropic API key: ' ANTHROPIC_API_KEY; echo; export ANTHROPIC_API_KEY
+## Ollama errors
+
+- Confirm the Ollama service is running and `llm.base_url` points to its native
+  API host.
+- Check the model name with `ollama list` or the service's model discovery
+  command. Pull the model if it is local and missing.
+- A `:cloud` model can involve remote processing even when the API endpoint is
+  localhost. Check `llm.ollama_mode` and the model name.
+- Ollama does not use `llm.openai_base_url`; configure its own base URL and
+  mode.
+
+## Missing scanner or incomplete scan
+
+Run:
+
+```text
+trident install-tools --check
+trident install-tools --verify
 ```
 
-Or via config (stored in your local config file):
+Install or repair available tools with `trident install-tools --verify
+--warmup`. npm-audit requires Node.js/npm. Go-based tools use system Go or the
+managed runtime. Scanner database downloads need network access. A scan can
+complete without every adapter when a tool is not installed or not applicable;
+inspect the scan's diagnostics before treating its coverage as sufficient.
 
-```bash
-trident config set llm.openai_api_key
-trident config set llm.anthropic_api_key
-```
+## Imported reports
 
-These commands use hidden prompts. For automation, pipe a protected secret
-source into `trident config set KEY --stdin`; never pass the secret as a
-positional argument. Config-file values remain plaintext on disk, protected by
-local file permissions rather than encryption.
+- Use `trident inspect FILE --format json` to inspect normalization without
+  running a scan.
+- Set `--input-format` when automatic detection cannot identify the report.
+- Use `--mapping FILE` for a schema that does not have a first-class adapter.
+- Use `--no-schema-ai` to disable model-assisted schema inference.
+- Imported findings without `--source-dir` are report-only; source reachability
+  remains unknown.
 
----
+## Exit codes and empty results
 
-## Getting more diagnostic output
+- `0`: review completed below the priority gate. Lower priority findings may
+  still exist.
+- `1`: a prioritized confirmed finding meets the configured gate.
+- `2`: scan, ingestion, or report error, or incomplete review with untriaged or
+  unresolved findings.
 
-```bash
-trident scan . 2>diagnostics.txt
-```
+An empty P0-P4 total does not mean every candidate was disproved. Check
+`Untriaged`, `Unresolved`, disposition counts, and the JSON report. Exit 2 takes
+precedence when review is incomplete.
 
-The CLI writes progress and error messages to stderr. Raw scanner stdout/stderr
-is not persisted as job events, but diagnostics and paths can still be
-sensitive; inspect them before sharing. Model prompts and source excerpts are
-not intentionally logged by the OpenAI-compatible backend.
+## Useful output for diagnosis
 
----
+1. Rerun with `--format json --output-file results.json` and keep the exit code.
+2. Check whether the configured backend received requests at the intended
+   endpoint.
+3. Inspect tool status and sanitized error text.
+4. Share only synthetic reproductions and redacted metadata.
 
-## See also
-
-- [INSTALLATION](INSTALLATION.md) - complete setup instructions
-- [CONFIGURATION](CONFIGURATION.md) - all config keys and environment variables
-- [LLM_BACKENDS](LLM_BACKENDS.md) - backend-specific setup
-- [LIMITATIONS](LIMITATIONS.md) - known coverage gaps
+See [Validation](VALIDATION.md) for the scope of controlled acceptance tests.

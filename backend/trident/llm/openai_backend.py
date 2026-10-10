@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import ipaddress
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -22,11 +21,23 @@ _DEFAULT_MODEL = "gpt-4o"
 
 
 def _validate_base_url(base_url: str) -> str:
-    """Reject URL forms that can disclose bearer credentials or route them
-    over cleartext transport. Local HTTP is useful for loopback gateways.
+    """Validate an explicitly configured OpenAI-compatible API base URL.
+
+    HTTP and HTTPS are both supported. HTTPS is recommended for remote or
+    sensitive traffic; the configured URL determines the transport.
     """
+    if not isinstance(base_url, str) or any(
+        character.isspace() or ord(character) < 0x20 or character == "\\"
+        for character in base_url
+    ):
+        raise ValueError("OpenAI-compatible base URL is malformed")
     normalized = base_url.rstrip("/")
-    parsed = urlsplit(normalized)
+    try:
+        parsed = urlsplit(normalized)
+        # Accessing .port validates malformed and out-of-range ports.
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("OpenAI-compatible base URL is malformed") from exc
     if (
         parsed.scheme not in {"https", "http"}
         or not parsed.hostname
@@ -34,17 +45,12 @@ def _validate_base_url(base_url: str) -> str:
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
+        or "?" in normalized
+        or "#" in normalized
     ):
-        raise ValueError("OpenAI-compatible base URL must be an HTTPS URL without credentials or query")
-    if parsed.scheme == "http":
-        hostname = parsed.hostname.rstrip(".").lower()
-        is_loopback = hostname == "localhost"
-        try:
-            is_loopback = is_loopback or ipaddress.ip_address(hostname).is_loopback
-        except ValueError:
-            pass
-        if not is_loopback:
-            raise ValueError("OpenAI-compatible HTTP is allowed only for a loopback gateway; use HTTPS")
+        raise ValueError(
+            "OpenAI-compatible base URL must be an HTTP(S) URL without credentials or query"
+        )
     return normalized
 
 
@@ -71,6 +77,7 @@ class OpenAIBackend(LLMBackend):
             timeout=timeout,
             headers=headers,
             follow_redirects=False,
+            verify=True,
         )
 
     def _post(self, url: str, payload: dict) -> dict:

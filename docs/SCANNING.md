@@ -1,163 +1,116 @@
-# Scanning
+# Scanning and analysis
 
-Trident scans an authorized source tree, sends candidates through its review
-pipeline, and runs automatic triage on the findings that survive review.
+Trident accepts a local source directory, a Git repository, a ZIP archive, or
+existing scanner reports. Scanning is for assets you own or are authorized to
+assess. Review [Privacy](PRIVACY.md) before sending source evidence to a remote
+model.
 
-## Basic usage
+## Scan source code
 
-~~~bash
-trident scan [WORKSPACE] [OPTIONS]
-~~~
+Run from a repository or provide its path:
 
-WORKSPACE defaults to the current directory for native scanning. It can be a
-local directory, a Git URL, or a ZIP archive.
-
-Uploaded ZIP archives reject traversal paths, links, and special filesystem
-entries. Extraction is limited to 100,000 members and 4 GiB of expanded file
-content. Git source URLs must not embed credentials or query strings; use SSH
-agent credentials or the host's credential manager instead. Git transport
-errors are summarized without printing the URL or raw Git output.
-
-~~~bash
+```bash
 trident scan .
-trident scan /path/to/source
-trident scan https://example.com/owner/repository.git
-trident scan /tmp/source-snapshot.zip
-~~~
+trident scan ./service --format json --output-file results.json
+```
 
-Only scan sources you own or are authorized to analyze.
+Trident prepares an isolated workspace, identifies available languages and
+manifests, runs configured scanner integrations, normalizes and correlates
+their records, and sends eligible findings through the configured review and
+triage pipeline. A scanner can be skipped if it is missing or does not apply to
+the target. Check tool setup with `trident install-tools --check`.
 
-## Import external reports
+The twelve integrations are Semgrep, Bandit, gosec, Checkov, Grype,
+OSV-Scanner, Trivy, pip-audit, npm-audit, govulncheck, Gitleaks, and
+TruffleHog. See [Tools](TOOLS.md) for requirements and the evidence each tool
+produces.
 
-Use `--input-file` to import external scanner output instead of running
-Trident's scanner subprocesses. The option is repeatable, so SonarQube and
-OWASP Dependency-Check results can be correlated in one job:
+## Import scanner reports
 
-~~~bash
-trident scan --input-file sonar-report.json
-trident scan --input-file sonar-report.json \
-  --input-file dependency-check-report.json
-~~~
+Provide one or more report files to skip scanner subprocess execution:
 
-Deterministic first-class formats are SonarQube issue JSON, OWASP
-Dependency-Check JSON with `reportSchema: 1.1`, SARIF 2.1.0, and CycloneDX JSON
-with vulnerability data. Other heterogeneous security JSON can use automatic
-inference or a versioned explicit mapping. See [JSON ingestion](JSON_INGESTION.md).
+```bash
+trident scan --input-file sonar.json --format json --output-file results.json
+trident scan --input-file sonar.json --input-file dependency-check.json
+trident scan --input-file results.sarif --input-format sarif
+trident inspect report.json --format json
+```
 
-Imported findings use the normal correlation, Council, judge, red-team, triage,
-report, and exit-code pipeline. A report-only import does not have source code
-for agentic investigation or reachability, so those fields are marked
-unavailable or `unknown` rather than inferred. Imported records remain scanner
-evidence. A finding retained in the output means retained for remediation work,
-not proven exploitable from source.
+Deterministic adapters support SonarQube, OWASP Dependency-Check, SARIF 2.1.0,
+and CycloneDX vulnerability reports. For other JSON structures, provide an
+explicit mapping or use bounded schema inference. A generic JSON file is not
+assumed to be a vulnerability report.
 
-Provide source context without running scanners when code-grounded review is
-needed:
+Use `--mapping FILE` to apply a versioned mapping. `--no-schema-ai` disables
+LLM-assisted schema inference. `inspect` normalizes a report for review; it
+does not run scanners, persist a scan, or invoke the Council.
 
-~~~bash
-trident scan --input-file sonar-report.json --source-dir /path/to/source
-~~~
+An imported report without `--source-dir` is `report_only`. Trident keeps its
+original record and provenance and does not claim that a path is present,
+reachable, or exploitable. Provide `--source-dir` when the source tree is
+available. `--discover-novel` optionally asks experts to inspect selected code
+regions beyond the imported records; it requires `--source-dir`.
 
-Source context enables code snippets, read-only agent investigation, and static
-reachability. Novel discovery remains disabled unless explicitly requested:
+## Review stages
 
-~~~bash
-trident scan --input-file sonar-report.json \
-  --source-dir /path/to/source --discover-novel
-~~~
+1. **Normalize:** retain source tool, rule identifiers, locations, package
+   identity, scanner severity, and input provenance where supplied.
+2. **Correlate:** group duplicate evidence while retaining records that differ
+   in vulnerability identity or affected component.
+3. **Route and review:** deterministic legacy and structured evidence rules
+   select relevant experts. Eligibility is `legacy_match OR structured_match`;
+   multiple experts remain eligible when evidence spans domains.
+4. **Resolve disagreement:** experts can cross-examine. The judge reviews
+   selected high-severity and contested findings. Unresolved decisions remain
+   visible and make the scan incomplete.
+5. **Check attack chains:** Red-Team analysis evaluates confirmed findings as
+   a set. Exact unchanged model-visible input can reuse a successful result;
+   changed input clears stale chains and requests fresh analysis. If the call
+   budget prevents analysis, the current result is unavailable, not the prior
+   chain set.
+6. **Triage:** confirmed findings receive a P0-P4 priority when enough evidence
+   is available. The report records factors, rationale, reachability, and
+   remediation guidance.
 
-Use `--input-format auto`, `sonarqube`, `dependency-check`, `sarif`,
-`cyclonedx`, or `generic-json` when detection needs to be explicit. Use
-`--mapping FILE` for a deterministic user mapping and `--no-schema-ai` to
-disable optional schema mapping. Multiple input files are validated as one import job. A
-missing, unreadable, malformed, duplicate, or mismatched input fails the job
-with exit code 2 rather than producing a partial result.
+These stages assist review; they do not prove runtime exploitability or
+completeness. See [Council](AI_COUNCIL.md), [Attack chains](ATTACK_CHAINS.md),
+and [Triage](TRIAGE.md) for details.
 
-## Output
+## Important options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| --format | table | table, json, or sarif |
-| --output-file FILE | stdout | Write output to FILE |
-| --triage-output-file FILE | none | Write the complete automatic triage sidecar |
-| --quiet | false | Suppress progress and status messages |
+| Option | Use |
+| --- | --- |
+| `--input-file FILE` | Import a report; repeat for additional reports. |
+| `--input-format FORMAT` | Select `auto`, `sonarqube`, `dependency-check`, `sarif`, `cyclonedx`, or `generic-json`. |
+| `--source-dir DIR` | Supply source context for imported reports. |
+| `--mapping FILE` | Apply an explicit generic JSON mapping. |
+| `--no-schema-ai` | Keep schema selection deterministic. |
+| `--discover-novel` | Ask experts to inspect selected code regions; requires imported reports and source directory. |
+| `--backend NAME` | Override backend for this scan. |
+| `--openai-base-url URL` | Override the OpenAI-compatible endpoint; requires the OpenAI backend. |
+| `--model ALIAS` | Use one model alias for review roles in this scan. |
+| `--max-iterations N` | Override Council iteration limit. |
+| `--format FORMAT` | Choose `table`, `json`, or `sarif`. |
+| `--output-file FILE` | Write the primary report to a file. |
+| `--triage-output-file FILE` | Write the detailed worked-triage report. |
+| `--severity-gate LEVEL` | Set the exit-1 threshold (`critical`, `high`, `medium`, `low`). |
+| `--fail-on P0..P4` | Set the threshold using priority notation. |
+| `--quiet` | Suppress progress messages. |
 
-~~~bash
-trident scan . --format json --output-file results.json --quiet
-trident scan . --format sarif --output-file results.sarif --quiet
-trident scan . --format table --output-file results.txt --triage-output-file triage.txt
-~~~
+Run `trident scan --help` for the full option list.
 
-The default table is a numerical summary with explicit P0-P4 counts, the total
-prioritized count, and separate `Untriaged` and `Unresolved` counts. The total
-is the sum of the five priority counts; untriaged and unresolved records are
-not included in it. Table counts and the severity gate use the finalized JSON
-report population. JSON contains retained findings, review provenance, original
-imported records, and disposition evidence. SARIF 2.1.0 is suitable for
-code-scanning upload actions and exposes the same evidence under result
-properties. Triage runs automatically after council review. The
-selected output contains retained, actionable work items; scanner candidates
-refuted by Council/deliberation are excluded from that queue, while triage
-prioritizes only retained/confirmed findings. Their disposition and evidence
-remain represented in JSON, SARIF properties, and the full triage sidecar.
+## Database and workspace handling
 
-## Severity gate
+Trident stores scan state in a local SQLite database by default and uses a
+separate workspace for extracted or checked-out source. Database and workspace
+paths can be configured with `TRIDENT_SQLITE_PATH` and `TRIDENT_WORKSPACES`.
+They may contain source excerpts, scanner output, prompts, model responses,
+and finding evidence. Protect and retain them according to your organization's
+policy. See [Privacy](PRIVACY.md).
 
-| Option | Meaning |
-|--------|---------|
-| --severity-gate critical | Fail on P0 and above |
-| --severity-gate high | Fail on P1 and above |
-| --severity-gate medium | Fail on P2 and above |
-| --severity-gate low | Fail on P3 and above |
-| --fail-on P0 through P4 | Equivalent tier notation |
+## See also
 
-The default gate is high. A scan returns 0 when review completed and no retained
-finding reaches the gate, 1 when one or more prioritized findings do, and 2
-when import, ingestion, scanning, or report processing fails, or confirmed
-findings remain untriaged or unresolved. Exit 2 takes precedence over the
-severity gate because the analysis is incomplete. In imported report mode,
-retained means retained for remediation work. It does not by itself prove
-source-level reachability.
-
-~~~bash
-trident scan . --severity-gate critical
-trident scan . --fail-on P2
-~~~
-
-## LLM overrides
-
-~~~bash
-trident scan . --backend ollama --model nemotron-3-super:cloud
-trident scan . --backend openai --model gpt-4o
-trident scan . --backend anthropic --model claude-sonnet-5
-~~~
-
-CLI flags take precedence over environment and config-file values.
-
-## Scan behavior
-
-| Option | Description |
-|--------|-------------|
-| --max-iterations N | Maximum council debate iterations |
-| --target-name NAME | Display name in reports |
-| --no-guards | Skip guards for debugging only |
-
-## Confirmed findings
-
-Output formats place retained findings in the actionable list. Raw, refuted,
-duplicate, suppressed, and parse-error records are excluded from that list but
-are described in the `dispositions` object. A remaining final dispute is
-normalized to `unresolved` by production convergence (except SonarQube code
-smells, which are out of scope). See
-[OUTPUT_FORMATS](OUTPUT_FORMATS.md) for field definitions and
-[TRIAGE](TRIAGE.md) for priority guidance.
-
-## Help
-
-~~~bash
-trident scan --help
-trident help
-trident help ci
-trident help output
-trident help tools
-~~~
+- [Quick start](QUICK_START.md)
+- [Output formats](OUTPUT_FORMATS.md)
+- [Custom LLM endpoint guide](CONNECTING_LLM_ENDPOINTS.md)
+- [Troubleshooting](TROUBLESHOOTING.md)

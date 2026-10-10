@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import datetime
+import ipaddress
+import socket
+import ssl
+
 import pytest
 from click.testing import CliRunner
 
@@ -102,10 +107,145 @@ def test_openai_compatible_local_http_contract_and_alias():
         assert all("Authorization" not in call["request_body"] for call in server.calls)
 
 
+def test_openai_compatible_local_http_omits_auth_for_unauthenticated_gateway():
+    with OpenAICompatibleServer() as server:
+        backend = OpenAIBackend(base_url=f"{server.base_url}/v1", max_retries=0)
+        try:
+            assert backend.chat(
+                [ChatMessage("user", "Synthetic unauthenticated request")],
+                model="security-expert",
+            ).content
+        finally:
+            backend.client.close()
+        assert len(server.calls) == 1
+        assert server.calls[0]["auth_present"] is False
+        assert server.calls[0]["request_body"]["model"] == "security-expert"
+
+
+def test_openai_compatible_custom_api_path_uses_configured_prefix():
+    with OpenAICompatibleServer(api_prefix="/inference/openai/v1") as server:
+        backend = OpenAIBackend(
+            base_url=f"{server.base_url}/inference/openai/v1", max_retries=0,
+        )
+        try:
+            response = backend.chat(
+                [ChatMessage("user", "Synthetic custom-path check")],
+                model="custom-path-alias",
+            )
+        finally:
+            backend.client.close()
+
+        assert response.content
+        assert server.calls[0]["path"] == "/inference/openai/v1/chat/completions"
+        assert server.calls[0]["route"] == "/v1/chat/completions"
+        assert server.calls[0]["model"] == "custom-path-alias"
+
+
 @pytest.mark.parametrize("url", [
-    "http://gateway.example.invalid/v1",
+    "http://127.0.0.1:8000/v1",
+    "http://192.0.2.10:8000/v1",
+    "http://[2001:db8::10]:8443/custom/v1",
+    "http://gateway.internal.example.com:8000/custom/v1",
+    "https://llm-gateway.example.com:9443/openai/v1",
+])
+def test_openai_backend_accepts_explicit_http_and_https_endpoints_without_dns_pinning(
+    url, monkeypatch,
+):
+    def unexpected_dns(*_args, **_kwargs):
+        raise AssertionError("URL validation must not perform custom DNS resolution")
+
+    monkeypatch.setattr(socket, "getaddrinfo", unexpected_dns)
+    backend = OpenAIBackend(base_url=url, model="enterprise-sec-model", max_retries=0)
+    try:
+        assert backend.base_url == url
+        assert backend.default_model == "enterprise-sec-model"
+    finally:
+        backend.client.close()
+
+
+def _local_tls_context(tmp_path):
+    """Build a short-lived test CA/leaf cert for a real verified HTTPS request."""
+    x509 = pytest.importorskip("cryptography.x509")
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Trident test gateway")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = tmp_path / "gateway-test-ca.pem"
+    key_path = tmp_path / "gateway-test-key.pem"
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert_path, key_path)
+    return context, cert_path
+
+
+def test_openai_backend_verifies_https_certificate_and_accepts_configured_ca(
+    tmp_path, monkeypatch,
+):
+    context, cert_path = _local_tls_context(tmp_path)
+    monkeypatch.setenv("SSL_CERT_FILE", str(cert_path))
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    with OpenAICompatibleServer(ssl_context=context) as server:
+        backend = OpenAIBackend(base_url=f"{server.base_url}/v1", max_retries=0)
+        try:
+            assert backend.health()["status"] == "ok"
+            assert backend.chat(
+                [ChatMessage("user", "Synthetic verified HTTPS check")],
+                model="security-expert",
+            ).content
+        finally:
+            backend.client.close()
+        assert [call["path"] for call in server.calls] == [
+            "/v1/models", "/v1/chat/completions",
+        ]
+
+
+def test_openai_backend_rejects_untrusted_https_certificate(tmp_path, monkeypatch):
+    context, _cert_path = _local_tls_context(tmp_path)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    with OpenAICompatibleServer(ssl_context=context) as server:
+        backend = OpenAIBackend(base_url=f"{server.base_url}/v1", max_retries=0)
+        try:
+            with pytest.raises(LLMUnavailable):
+                backend._post(
+                    f"{backend.base_url}/chat/completions", {"model": "security-expert"}
+                )
+        finally:
+            backend.client.close()
+
+
+@pytest.mark.parametrize("url", [
     "".join(('https://', 'synthetic-user', ':', 'synthetic-password', '@gateway.example.invalid/v1')),
+    "https://synthetic-user@gateway.example.invalid/v1",
     "https://gateway.example.invalid/v1?token=synthetic",
+    "https://gateway.example.invalid/v1?",
+    "http://gateway.example.invalid/v1#fragment",
+    "http://gateway.example.invalid/v1#",
+    "http://gateway.example.invalid:99999/v1",
+    "http://gateway.example.invalid/v1\n",
     "file:///tmp/v1",
 ])
 def test_openai_gateway_rejects_unsafe_endpoint_urls(url):

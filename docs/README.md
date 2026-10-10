@@ -1,107 +1,50 @@
-# Trident CLI documentation
+# Trident documentation
 
-Trident is a local command-line security analysis engine built around evidence-preserving
-triage. These documents explain how twelve scanners find candidates, how review
-separates real findings from noise, how deterministic triage computes a P0-P4
-priority, and how the result becomes a worked queue without losing the audit
-trail. They also document where human review remains mandatory.
+Start with installation, then configure a model provider and run an authorized
+scan. The guides below follow that workflow. Product boundaries and privacy
+notes are part of operating the tool, not optional background reading.
 
-## New users
+## Use Trident
 
-- [Installation](INSTALLATION.md) - Python setup, scanner tools, prerequisites,
-  and local data locations.
-- [Quick start](QUICK_START.md) - configure a backend and complete a first scan.
-- [Scanning](SCANNING.md) - source types, profiles, options, and exit codes.
-- [JSON ingestion](JSON_INGESTION.md) - standardized formats, safe generic
-  mappings, inference, provenance, and accounting.
+1. [Install the CLI and scanner tools](INSTALLATION.md).
+2. [Configure Ollama, OpenAI-compatible APIs, or Anthropic](LLM_BACKENDS.md).
+3. For custom endpoints, follow
+   [Connecting Trident to a Custom LLM Endpoint or Proxy](CONNECTING_LLM_ENDPOINTS.md).
+4. [Run source scans or import reports](SCANNING.md).
+5. [Read terminal, JSON, and SARIF results](OUTPUT_FORMATS.md).
+6. [Review P0-P4 priorities](TRIAGE.md) and
+   [Council decisions](AI_COUNCIL.md).
+7. [Diagnose failures](TROUBLESHOOTING.md).
 
-## Scan operators and triage reviewers
+Before sending source evidence to a model or gateway, read
+[Privacy and data handling](PRIVACY.md). See [Limitations](LIMITATIONS.md) for
+what a static scan and model review cannot prove.
 
-- [Tools](TOOLS.md) - the twelve scanner adapters and their coverage.
-- [AI council](AI_COUNCIL.md) - expert review, consensus, judge, and red team.
-- [Triage adjustments](GUARDS.md) - deterministic class, reachability, and
-  corpus-profile corrections.
-- [Triage](TRIAGE.md) - P0-P4 prioritization, factors, playbooks, and audit data.
-- [Attack chains](ATTACK_CHAINS.md) - multi-finding escalation context.
-- [Output formats](OUTPUT_FORMATS.md) - table, JSON, SARIF, and triage sidecars.
-- [Validation](VALIDATION.md) - approved public validation summary and scope.
-
-## Configuration and model reviewers
-
-- [Configuration](CONFIGURATION.md) - persistent settings and environment
-  precedence.
-- [LLM backends](LLM_BACKENDS.md) - Ollama, OpenAI, and Anthropic setup.
-- [Corpus calibration](CORPUS_GUARD_MODEL.md) - feed refresh, profiles, and the
-  separately maintained statistical artifact.
-- [Agentic exploration](AGENTIC_MODE.md) - optional bounded workspace review.
-
-## CI and release maintainers
-
-- [CI and SARIF](CI_CD.md) - package checks, SARIF upload, and exit-code policy.
-- [Public release readiness](OPEN_SOURCE_READINESS.md) - publication gates,
-  licensing, reproducibility, and known prerequisites.
-- [Troubleshooting](TROUBLESHOOTING.md) - installation, tool, backend, and scan
-  diagnostics.
-
-## Developers
-
-- [Development](DEVELOPMENT.md) - repository layout and local checks.
-- [Architecture](ARCHITECTURE.md) - scan data flow, persistence, and trust
-  boundaries.
-- [Validation](VALIDATION.md) - layered tests, holdouts, and CLI evidence.
-- [Feature status](FEATURE_STATUS.md) - supported, optional, experimental, and
-  unsupported behavior.
-
-## Security and release reviewers
-
-- [Limitations](LIMITATIONS.md) - what Trident cannot establish on its own.
-- [Security policy](../SECURITY.md) - vulnerability reporting and sensitive data
-  handling.
-- [Privacy and data handling](PRIVACY.md) - LLM processing, local storage,
-  retention, and operator responsibilities.
-- [Third-party notices](../THIRD-PARTY-NOTICES.md) - scanner licensing.
-
-## Capability status
-
-| Capability | Status | Primary documentation |
-| --- | --- | --- |
-| Local directory, Git, and ZIP scanning | Supported | [Scanning](SCANNING.md) |
-| Twelve deterministic scanner adapters | Supported | [Tools](TOOLS.md) |
-| LLM council adjudication | Supported with configured backend | [AI council](AI_COUNCIL.md) |
-| Automatic P0-P4 triage | Supported | [Triage](TRIAGE.md) |
-| Table, JSON, and SARIF reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
-| Full triage sidecar reports | Supported | [Output formats](OUTPUT_FORMATS.md) |
-| SonarQube, Dependency-Check, SARIF, and CycloneDX import | Supported | [Scanning](SCANNING.md) |
-| Heterogeneous JSON mapping | Supported with bounds | [JSON ingestion](JSON_INGESTION.md) |
-| CWE-profile triage adjustment | Optional; requires refresh | [Corpus calibration](CORPUS_GUARD_MODEL.md) |
-| Agentic exploration | Supported, optional; off by default | [Agentic exploration](AGENTIC_MODE.md) |
-| Runtime penetration testing | Unsupported | [Limitations](LIMITATIONS.md) |
-| Compliance certification | Unsupported | [Limitations](LIMITATIONS.md) |
-
-## Help topics
-
-The built-in help index is the shortest command reference:
-
-~~~bash
-trident help
-~~~
-
-The supported deep-dive topics map to these guides:
+## Reference guides
 
 | Topic | Guide |
 | --- | --- |
-| setup | [Installation](INSTALLATION.md) and [Quick start](QUICK_START.md) |
-| backends | [LLM backends](LLM_BACKENDS.md) |
-| ci | [CI and SARIF](CI_CD.md) |
-| config | [Configuration](CONFIGURATION.md) |
-| output | [Output formats](OUTPUT_FORMATS.md) |
-| guards | [Guards](GUARDS.md) |
-| experts | [AI council](AI_COUNCIL.md) |
-| tools | [Tools](TOOLS.md) |
+| Settings, secret entry, and precedence | [Configuration](CONFIGURATION.md) |
+| Scanner adapters and setup | [Tools](TOOLS.md) |
+| Standardized and mapped report input | [JSON ingestion](JSON_INGESTION.md) |
+| Expert routing, adjudication, and judge review | [AI Council](AI_COUNCIL.md) |
+| Red-Team and attack paths | [Attack chains](ATTACK_CHAINS.md) |
+| Deterministic triage adjustments | [Guards](GUARDS.md) |
+| CI and SARIF | [CI/CD](CI_CD.md) |
+| Agentic expert exploration | [Agentic mode](AGENTIC_MODE.md) |
+| Corpus-profile adjustment | [Corpus guard model](CORPUS_GUARD_MODEL.md) |
 
-## Documentation boundary
+## Developer and maintainer guides
 
-The CLI is a local, single-operator tool. The documentation does not claim
-autonomous security approval, complete vulnerability coverage, runtime testing,
-or authoritative LLM decisions. Generated findings and triage guidance require
-qualified human review before operational use.
+- [Architecture](ARCHITECTURE.md) describes data flow and trust boundaries.
+- [Development](DEVELOPMENT.md) describes local setup and tests.
+- [Validation](VALIDATION.md) distinguishes unit, integration, and installed
+  package evidence.
+- [Open-source readiness](OPEN_SOURCE_READINESS.md) describes licensing and
+  repository release checks.
+- [Security policy](../SECURITY.md) describes vulnerability reporting.
+- [Third-party notices](../THIRD-PARTY-NOTICES.md) lists external tool notices.
+
+Package version identifiers belong in package metadata and release records.
+User guides avoid version-specific wheel names so installation instructions
+remain current.

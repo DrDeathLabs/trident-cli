@@ -12,13 +12,12 @@ names for schema compatibility.
 
 ---
 
-## Why these adjustments
+## Purpose
 
-LLMs overestimate severity consistently in two categories: hardcoded secrets and hygiene findings. They also overestimate reach - a "remote_unauth" rating on a private internal function that is never exposed to the network.
-
-These adjustments are layered, deterministic, and auditable. Every adjustment
-they make is recorded in the finding's triage fields so you can see exactly what
-changed and why.
+The guards adjust model-assessed triage factors using deterministic rules and
+available source context. Each adjustment is recorded in the finding's triage
+fields with its evidence or reason. A guard can leave a value unchanged when
+its evidence is missing or does not qualify.
 
 For report-only imports, the corpus and class mechanisms can still adjust the
 P0-P4 factors from imported evidence. Reachability remains `unknown` because no

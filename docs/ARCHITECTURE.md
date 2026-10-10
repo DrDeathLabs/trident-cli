@@ -89,9 +89,10 @@ receive prompts and code excerpts required for review; choose a backend that
 matches the sensitivity of the code being scanned.
 
 Prompts may contain scanner evidence and source excerpts. Provider and gateway
-retention are outside Trident's control. For remote OpenAI-compatible endpoints
-the URL must use HTTPS; cleartext HTTP is limited to loopback, and redirects
-are disabled.
+retention are outside Trident's control. OpenAI-compatible endpoints accept
+explicit HTTP or HTTPS URLs. HTTP is unencrypted; HTTPS certificate verification
+remains enabled, and redirects are disabled. See [Privacy](PRIVACY.md) and the
+[custom endpoint guide](CONNECTING_LLM_ENDPOINTS.md).
 
 Red-Team selection sorts confirmed findings by severity, path, line, and ID
 before applying its bound. It fingerprints the exact model-visible messages.

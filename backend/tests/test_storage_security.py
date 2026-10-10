@@ -183,6 +183,24 @@ def test_secure_file_rechecks_path_type_after_prior_secure_call(tmp_path, monkey
         secure_file(target)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the Windows junction case is tested separately")
+def test_atomic_write_rejects_symlinked_ancestor(tmp_path):
+    from trident.storage_security import atomic_write_private
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = tmp_path / "config-link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    target = link / "nested" / "config.toml"
+    with pytest.raises(OSError, match="symbolic link or reparse point"):
+        atomic_write_private(target, b"synthetic credential")
+    assert list(outside.iterdir()) == []
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows reparse-point handling is platform-specific")
 def test_secure_directory_rejects_windows_junction(tmp_path):
     """A junction is not reported by Path.is_symlink() on supported Windows Python."""
@@ -212,8 +230,11 @@ def test_secure_directory_rejects_windows_junction(tmp_path):
     assert getattr(link.lstat(), "st_file_attributes", 0) & 0x400
 
     try:
+        # The checked path itself is ordinary or absent; only its ancestor is
+        # the junction. This matches a config file below a redirected app-data
+        # directory and catches ancestor-only reparse points.
         with pytest.raises(OSError, match="reparse point"):
-            secure_directory(link)
+            secure_directory(link / "nested-config")
         assert list(outside.iterdir()) == []
     finally:
         os.rmdir(link)

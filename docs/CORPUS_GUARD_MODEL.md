@@ -23,7 +23,10 @@ The corpus model is built from seven vulnerability intelligence feeds:
 | vulnrichment | CISA vulnrichment enrichment dataset | Current feed size |
 | OSV | Open Source Vulnerabilities database | Current feed size |
 
-These feeds are joined on CVE ID and CWE ID to produce a unified dataset with enriched labels. EPSS scores, KEV membership, and ExploitDB entries are used as training signals for exploitability ground truth.
+The refresh process joins the retrieved data by CVE and CWE identifiers where
+available. EPSS scores, KEV membership, and ExploitDB records contribute
+signals to the generated artifact; they are not ground truth for a specific
+finding or deployment.
 
 ---
 
@@ -38,7 +41,9 @@ After joining the feeds, the model groups CVEs by CWE and computes a statistical
 - KEV rate (fraction of CVEs in the KEV catalog)
 - ExploitDB rate (fraction with a public exploit)
 
-These profiles represent what severity ratings actually look like for vulnerabilities of each type, across real-world disclosure data.
+Profiles summarize the retrieved vulnerability records for each CWE. They do
+not describe every vulnerability in that class or predict exploitability for a
+particular target.
 
 The number of qualifying CWE profiles is a property of the downloaded feed
 snapshot. CWEs with fewer than 200 CVEs are excluded from calibration, so the
@@ -78,9 +83,12 @@ ceilings or floors. Guard evaluation makes no external API requests.
 trident model refresh
 ```
 
-Downloads all seven feeds, joins them, computes CWE profiles, trains the gradient-boosted model, and serializes it to the local model store. This is a long-running operation - expect 20-45 minutes depending on your connection speed and hardware.
+Downloads the configured feeds, joins available records, computes CWE
+profiles, trains the separate gradient-boosted artifact, and stores the result
+locally. It can take a long time and requires network access and space for the
+feed data and generated files.
 
-The model refresh requires an active internet connection and sufficient disk space (~2 GB for the raw feeds, ~50 MB for the compiled model).
+Feed size and processing time vary by source snapshot and platform.
 
 ### Check model status
 
@@ -139,7 +147,7 @@ The NVD, EPSS, and OSV feeds are updated frequently. Running `trident model refr
 
 If the corpus profiles have not been built:
 
-- The corpus guard is silently skipped for all findings
+- The corpus guard is skipped for all findings; non-quiet scans warn that it is inactive
 - `corpus_guard` fields will be `null` on every finding
 - The class guard and reachability guard still operate normally
 - Scan output is valid and usable - just uncalibrated by the corpus
@@ -166,5 +174,5 @@ CALIBRATION_DATA_DIR=/mnt/fast-disk/trident trident model refresh
 ## See also
 
 - [GUARDS](GUARDS.md) - how the corpus guard adjusts triage ratings
-- [CONFIGURATION](CONFIGURATION.md) - `TRIDENT_DATA_DIR` and model-related config keys
+- [CONFIGURATION](CONFIGURATION.md) - `CALIBRATION_DATA_DIR` and model-related settings
 - [INSTALLATION](INSTALLATION.md) - `trident install-tools --warmup` for initial setup
